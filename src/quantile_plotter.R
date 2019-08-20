@@ -9,15 +9,19 @@
 # against sample discharge quntiles. Outputs a pdf figure. 
 
 # specify working directory:
-wd = "/Users/allenstandard/research/2019_08_20_ROTFL/git/ROTFL"
+wd = "/Users/allenstandard/research/2019_08_19_ROTFL/git/ROTFL"
 
 ################################################################################
 # Read in all CSVs
 ################################################################################
 # put all tables from Drive folder into the "in" directory:
 inDirPath = paste0(wd, '/in')
-pdfOutPath = paste0(wd, "/out/temp.pdf")
+if (!file.exists(inDirPath)){dir.create(inDirPath)}
 CSVpaths_all = list.files(inDirPath, ".csv", recursive=T, full.names=T)
+
+# write out PDFs in "out" directory:
+outDirPath = paste0(wd, "/out")
+if (!file.exists(outDirPath)){dir.create(outDirPath)}
 
 # hard-coded names of CSV tables:
 mission = c("Landsat_5", "Landsat_7", "Landsat_8")
@@ -55,7 +59,7 @@ for (i in 1:length(probs)){
 }
 
 ################################################################################
-# Calculate discharge quantiles for missions and datasets
+# Calculate discharge quantiles for individual missions and datasets
 ################################################################################
 qTabList = as.list(tabNames)
 for (i in 1:length(mission)){
@@ -68,8 +72,8 @@ for (i in 1:length(mission)){
     tab = get(tabVarName)
     
     tab_qTab = as.data.frame(array(NA, c(length(probs), ncol(tab))))
-    for (l in 1:length(probs)){
-      tab_qTab[l,] = as.vector(apply(tab, 2, quantile, probs=probs[l], na.rm=T))
+    for (k in 1:length(probs)){
+      tab_qTab[k,] = as.vector(apply(tab, 2, quantile, probs=probs[k], na.rm=T))
     }
     qTabList[[tabVarInd]] = tab_qTab
   }
@@ -78,6 +82,9 @@ for (i in 1:length(mission)){
 ################################################################################
 # plot discharge quantiles
 ################################################################################
+pdfOutPath = paste0(outDirPath, "/quantile_plots.pdf")
+
+# set up plot:
 pdf(pdfOutPath, 14, 12)
 par(mar=c(4,4,1,1))
 layout(matrix(c(1,1,1,1,
@@ -93,7 +100,7 @@ for (i in 1:length(plotInd)){
   m2s_match = match(names(Master_Value_qTab), names(sTab))
   
   plot.new()
-  text(0.5, 0.5, sub("_", " ", tabNames[plotInd[i]]), cex=2, font=2)
+  text(0.5, 0.5, gsub("_", " ", tabNames[plotInd[i]]), cex=2, font=2)
   
   for (j in 1:length(probs)){
     
@@ -109,7 +116,20 @@ for (i in 1:length(plotInd)){
     title(paste0("Quantile: ", probs[j]*100, "%"), line=-1)
     abline(0, 1, lwd=0.5)
   
-    # run a 1-way Z-test (or a non parametric equivalent) here
+    # Wilcox non-parametrix inferential test:
+    # p-val>0.01 means that sample is not statistically different than population:
+    wilcox = wilcox.test(Qsam_cms, Qpop_cms, "two.sided", exact=F)
+    if (wilcox$p.value < 1e-3){
+      legend("bottomright", paste("Wilcox p-value < 0.001", wilcox$p.value))
+    }else{
+      legend("bottomright", paste("Wilcox p-value =", round(wilcox$p.value, 3)))
+    }
+    
+    # parametric t-test (likely not correct test due to apparent heteroskedasticity):
+    # tTest = t.test(Qsam_cms, Qpop_cms)
+    # text(max(Qpop_cms, na.rm=T), min(Qsam_cms, na.rm=T), 
+    #      paste("t-test p-value =", tTest$p.value), pos=2)
+    
   }
   plot.new()
 }
