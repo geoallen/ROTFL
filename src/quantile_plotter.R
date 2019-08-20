@@ -6,7 +6,11 @@
 ################################################################################
 
 # reads in all data tables and plots population discharge quantiles 
-# against sample discharge quntiles. Outputs a pdf figure. 
+# against sample discharge quntiles. Outputs a pdf figure.
+
+# runs wilcox (Mann-Whitney) non-parametric test to determine if sample is  
+# statistically different than population. 
+
 
 # specify working directory:
 wd = "/Users/allenstandard/research/2019_08_19_ROTFL/git/ROTFL"
@@ -25,7 +29,7 @@ if (!file.exists(outDirPath)){dir.create(outDirPath)}
 
 # hard-coded names of CSV tables:
 mission = c("Landsat_5", "Landsat_7", "Landsat_8")
-master = "Master"
+master = c("Master")
 datatype = c("Date", "Value", "Code")
 dataset = c("CloudsRemoved", "AllReturns")
 
@@ -120,7 +124,7 @@ for (i in 1:length(plotInd)){
     # p-val>0.01 means that sample is not statistically different than population:
     wilcox = wilcox.test(Qsam_cms, Qpop_cms, "two.sided", exact=F)
     if (wilcox$p.value < 1e-3){
-      legend("bottomright", paste("Wilcox p-value < 0.001", wilcox$p.value))
+      legend("bottomright", "Wilcox p-value < 0.001")
     }else{
       legend("bottomright", paste("Wilcox p-value =", round(wilcox$p.value, 3)))
     }
