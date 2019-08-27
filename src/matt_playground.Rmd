@@ -140,8 +140,10 @@ spatial <- site_sf %>%
 
 
 qpal <- colorNumeric("Reds", spatial$d, n = 7)
+```
 
-
+## Map (takes a long time, don't run)
+```{r,eval=F}
 big_map <- leaflet() %>%
   addProviderTiles(providers$CartoDB.DarkMatter) %>%
   addCircleMarkers(data=spatial,group='sat',color=~qpal(spatial$d)) %>%
@@ -155,8 +157,17 @@ mapshot(big_map,url='map.html')
 
 
 ```{r}
-ggplot(nested_gs_mods,aes(x=nsat,y=d,color=p.value)) + 
-  geom_point() 
+d_plot <- nested_gs_mods %>%
+  mutate(pcut = cut(p.value,breaks=c(0,0.001,0.01,0.05,0.1,1))) %>%
+  filter(!is.na(pcut))
+
+ggplot(d_plot,aes(x=nsat,y=d,color=pcut)) + 
+  geom_point() + 
+  theme_few() + 
+  xlab('# of satellite images') + 
+  ylab('D Value') + 
+  theme(legend.position=c(0.7,0.7)) + 
+  scale_x_log10()
 
 
 ```
