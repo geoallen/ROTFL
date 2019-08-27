@@ -4,6 +4,9 @@ library(dplyr)
 library(ggplot2)
 library(anytime)
 library(lubridate)
+library(modeest)
+library(sf)
+library(mapview)
 
 ### load data
 wd <- "D:/GoogleDrive/ROTFL"
@@ -108,7 +111,7 @@ ls8 <- wide2long(date=Landsat_8_Date_CloudsRemoved, value=Landsat_8_Value_Clouds
 # I am guessing this is edge of scenes? Lets drop those duplicatesd
 # so we can do the stats for all landsat data combined. It doesn't matter which
 # mission sampled if its the same site/date, but IF want to do analysis per 
-# mission join the data individuall and do NOT drop duplicates
+# mission join the data individual and do NOT drop duplicates
 ls_all <- bind_rows(ls5, ls7, ls8) %>%
   distinct(site, date, flow_sample, .keep_all = T)
 
@@ -119,48 +122,109 @@ ls_all <- bind_rows(ls5, ls7, ls8) %>%
 #   filter(n >1) %>%
 #   arrange(site, date, flow_sample)
 
-# dups2 <- ms_data %>%
-#   drop_na() %>%
-#   group_by(site, date,flow) %>%
-#   mutate(n = n()) %>%
-#   filter(n >1) %>%
-#   arrange(site, date, flow)
 
 ### join landsat "sampled" flow to master "population" flow
-ms_data_join <- ms_data %>%
+ms_join <- ms_data %>%
   rename(flow_pop = flow) %>%
   left_join(ls_all, by=c("site", "date")) %>%
-# remove data likely with ice by month and "estimated" Q code
+# remove data with ice IF is estimated Q/ice AND winter month 
   mutate(month = month(date),
-         ice_flag = ifelse(grepl("e", code) ==T, "ice", NA)) %>%
-  filter(!month %in% c(11, 12, 1, 2) & is.na(ice_flag))
+         ice_flag = ifelse(grepl("e", code) ==T, "ice", NA),
+         winter = ifelse(month %in% c(11,12,1,2), "winter", NA),
+         ice_winter = ifelse(ice_flag =="ice" & winter =="winter", "ice", NA)) %>%
+  filter(is.na(ice_winter))
 
-# But we can use this to take quick looks at the distributions of Q for a few sites
-ms_data_join %>%
-  dplyr::filter(site %in% unique(site)[1:9]) %>%
+# But we can use this to take quick looks at the distributions of Q for a few sites.
+# change the index numbers to pan around other sites
+ms_join %>%
+  dplyr::filter(site %in% unique(site)[1:20]) %>%
+  #dplyr::filter(site=="7139000") %>%
   ggplot() +
   geom_histogram(aes(flow_pop), fill="red", alpha=0.5) +
   geom_histogram(aes(flow_sample), fill="blue", alpha=0.5) +
-  scale_x_log10() +
+#  scale_x_log10() +
   scale_y_log10() +
   facet_wrap(~site, scales="free")
 
+# Distributions look good. I think we can extract mode, max, min per gage.
+# find mode, min, max for population and sample per site
+join_sum <- ms_join %>%
+  dplyr::select(site, flow_sample, flow_pop) %>%
+  arrange(site, flow_pop) %>%
+  group_by(site) %>%
+  mutate(prob_pop = 1-cume_dist(flow_pop),
+         prob_sample = 1-cume_dist(flow_sample)) %>%
+  # remove sites that have no landsat samples, or no gage flow data
+  mutate(na_sample = sum(is.na(flow_sample)),
+         na_pop = sum(is.na(flow_pop)),
+         n = n(),
+         ndays_pop = sum(!is.na(flow_pop))) %>%
+  ungroup() %>%
+  filter(n > na_sample & n > na_pop) %>%
+  group_by(site, ndays_pop) %>%
+  # calculate modal, max, min Q for sample and population
+  summarise_at(vars(flow_sample, flow_pop, prob_sample, prob_pop), funs(mode=modeest::mlv, min=min, max=max), na.rm=T) %>%
+  mutate(mode_ratio = flow_sample_mode / flow_pop_mode,
+         percentile_range_sample = (prob_sample_max - prob_sample_min) *100)
+  
+# doesn't work well for arid rivers that do not have lognormal flow distribution
+# these rivers have more of an exponential or some other EVD
 
-unique(ms_data$code)
+join_sum_site <- join_sum %>%
+  left_join(site_info, by = "site") %>%
+  st_as_sf(coords = c("dec_long_va", "dec_lat_va"), crs= 4326) %>%
+  # filter to gages that have > 5 years of Q data
+  filter(ndays_pop > 5*365)
+  
+# make some maps of how well landsat captures modal and range of Q per gage 
+mapview(join_sum_site, zcol='percentile_range_sample', legend=T )
+mapview(join_sum_site, zcol='mode_ratio', legend=T )
 
-ls7_data %>%
-  drop_na() %>%
-  dplyr::filter(site %in% unique(site)[6:10]) %>%
-  ggplot(aes(x=date, y=flow)) +
-  facet_wrap(~site, scales="free")
+
+# >90% of gages capture 97% perecntiles of flow
+ggplot(join_sum_site) +
+  geom_histogram(aes(percentile_range_sample)) +
+  scale_y_log10()
+
+# most gages capture close to modal Q. Landsat slightly underestimates on average
+ggplot(join_sum_site) +
+  geom_density(aes(mode_ratio)) +
+  #scale_y_log10() +
+  xlim(0, 3.5)+
+  geom_vline(xintercept=1, col="red")
+
+ggplot(join_sum_site) +
+  geom_point(aes(flow_pop_mode, flow_sample_mode)) +
+  scale_y_log10() +
+  scale_x_log10() +
+  geom_abline(intercept=0, slope=1, col="red")
+
+# does the length of the Q record (population) impact how well?
+ggplot(join_sum_site) +
+  geom_point(aes(ndays_pop, mode_ratio)) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_hline(yintercept=1, col="red")
+
+# does watershed area affect how well landsat represents modal Q?
+# Yes, there is a convergence to better representation as Area increases
+ggplot(join_sum_site) +
+  geom_point(aes(drain_area_va, mode_ratio)) +
+  scale_x_log10() +
+  scale_y_log10() 
+
+
+
+# ms_join %>%
+#   # dplyr::filter(site %in% unique(site)[1:20]) %>%
+#   dplyr::filter(site=="7139000") %>%
+#   ggplot(aes(date, flow_pop)) +
+#   geom_line() +
+#   scale_y_log10()
+#  
 
 # KS test
 
-
-# find mode, min, max for population and sample per site
-
-
-# plot KS test by Watershed area
 
 
 
