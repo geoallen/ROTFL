@@ -1,0 +1,188 @@
+---
+title: "Matt_Playground"
+author: "Matthew Ross"
+date: "8/21/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(sf)
+library(tidyverse)
+library(broom)
+library(mapview)
+library(tidyr)
+library(lubridate)
+library(dataRetrieval)
+library(htmlwidgets)
+library(ggthemes)
+library(leafpop)
+library(leaflet)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir='..')
+```
+
+## Read data and stack it
+
+```{r,eval=F}
+
+#Function for making data long. 
+read_stacker <- function(folder){
+  files <- list.files(path=path.expand(folder),full.names = T)
+
+  ## Dropping for now
+  #codes <- files[grepl('Codes_',files)]
+  dates <- files[grepl('Dates',files)]
+  q <- files[grepl('Values',files)]
+  
+  #make it long
+  date_data <- read_csv(dates) %>%
+    gather(key=id,value=date)
+
+  q_data <- read_csv(q) %>%
+    gather(key=id,value=q) %>%
+    mutate(date=as.POSIXct(date_data$date,origin='1970-01-01')) %>%
+    mutate(sat = substr(folder,4,12)) %>%
+    mutate(id = gsub('X','0',id)) %>%
+    mutate(id=ifelse(substr(id,1,1) != 0 & nchar(id) < 8,paste0('0',id),id))
+
+
+return(q_data)
+}
+
+
+#Folders where data lives
+folders <- c('in/Landsat_8/CloudsRemoved','in/Landsat_7/CloudsRemoved',
+             'in/Landsat_5/CloudsRemoved')
+
+#Stack all landsats and remove unknown IDS. 
+landsat_cloud_free <- map_dfr(folders,read_stacker) %>%
+  filter(id != '01135') %>%
+  filter(!is.na(date)) %>%
+  filter(!is.na(q), q> 0) 
+
+#Make a separate dataset where landsat only counts if it is at the same 
+#time q was taken. 
+matched_sats <-  landsat_cloud_free %>%
+  inner_join(usgs_full %>% select(id,date),by=c('id','date')) 
+
+#Stack the usgs full dataset
+usgs_full <- read_stacker(folder='in/Master_Tables')
+
+# Get the unique usgs ids
+ids <- unique(usgs_full$id)
+#Download site lat long and other info
+sites <- readNWISsite(ids) %>% as_tibble() %>%
+  rename(id=site_no)
+#Convert to spatial object
+site_sf <- st_as_sf(sites,coords=c('dec_long_va','dec_lat_va'),crs=4326)
+
+#Save as .RData file
+save(landsat_cloud_free,matched_sats,usgs_full,site_sf,file='out/rotfl_clean.RData')
+```
+
+
+## ks tests everywhere
+```{r}
+load('out/rotfl_clean.RData')
+nested_sat <- matched_sats %>%
+  group_by(id) %>%
+  nest() %>%
+  rename(sat_data=data)
+
+nested_gs <- usgs_full %>%
+  group_by(id) %>%
+  nest() %>%
+  inner_join(nested_sat,by='id')
+
+
+myks <- function(full,sat){
+  x = full %>%
+    filter(!is.na(q),q > 0) %>%
+    pull(q)
+  y = sat %>%
+    filter(!is.na(q), q > 0) %>%
+    pull(q)
+  tk <- ks.test(x,y)
+  out = tibble(d=tk$statistic,p.value=tk$p.value,nsat=length(y),sdq=sd(x),
+               mq=mean(x))
+  return(out)
+}
+
+myplotter <- function(full,sat){
+  x = full %>%
+    filter(!is.na(q),q > 0) %>%
+    pull(q)
+  y = sat %>%
+    filter(!is.na(q), q > 0) %>%
+    pull(q)
+  xt = tibble(q=x,data='usgs')
+  yt = tibble(q=y,data='sat')
+  gp <- rbind(xt,yt) %>%
+    ggplot(.,aes(x=q,color=data)) +
+    geom_density(size=1) + 
+    scale_color_manual(values=c('red3','black'),name='') + 
+    scale_x_log10() + 
+    theme_few() + 
+    theme(legend.position = c(0.8,0.8)) + 
+    ggtitle(paste('Cloud Free # =',length(y),sep=' '))
+  return((gp))
+}
+
+nested_gs_mods <- nested_gs %>%
+  mutate(ks = map2(data,sat_data,myks)) %>%
+  mutate(gp = map2(data,sat_data,myplotter)) %>%
+  unnest(ks) %>%
+  mutate(d=round(d,4))
+
+
+spatial <- site_sf %>%
+  inner_join(nested_gs_mods,by='id')
+
+
+qpal <- colorNumeric("Reds", spatial$d, n = 7)
+
+
+big_map <- leaflet() %>%
+  addProviderTiles(providers$CartoDB.DarkMatter) %>%
+  addCircleMarkers(data=spatial,group='sat',color=~qpal(spatial$d)) %>%
+  addLegend('bottomright',pal=qpal,values=spatial$d,
+            title='D Value') %>%
+  addPopupGraphs(spatial$gp,group='sat',width=250,height=250) 
+
+
+mapshot(big_map,url='map.html')
+```
+
+
+```{r}
+ggplot(nested_gs_mods,aes(x=nsat,y=d,color=p.value)) + 
+  geom_point() 
+
+
+```
+
+
+```{r}
+library(lattice)
+library(sp)
+
+data(meuse)
+coordinates(meuse) <- ~x+y
+proj4string(meuse) <- CRS("+init=epsg:28992")
+
+p <- xyplot(copper ~ cadmium, data = meuse@data, col = "grey", pch = 20, cex = 2)
+p <- mget(rep("p", length(meuse)))
+
+clr <- rep("grey", length(meuse))
+p <- lapply(1:length(p), function(i) {
+  clr[i] <- "red"
+  update(p[[i]], col = clr)
+})
+
+
+mapview(meuse,
+        zcol = "cadmium",
+        popup = popupGraph(p))
+```
+ 
+ 
