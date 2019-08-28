@@ -33,11 +33,6 @@ master = c("Master")
 datatype = c("Date", "Value", "Code")
 dataset = c("CloudsRemoved", "AllReturns")
 
-
-# outer(outer(dataset, datatype, paste, sep=".*"), 
-#       mission, paste, sep=".*")
-
-
 grepTerms = c(as.vector(outer(outer(mission, datatype, paste, sep=".*"), 
                                   dataset, paste, sep=".*")), 
                             paste(master, datatype, sep=".*"))
