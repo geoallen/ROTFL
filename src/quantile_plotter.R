@@ -46,6 +46,52 @@ for (i in 1:length(tabNames)){
   assign(tabNames[i], read.csv(pathNamesList[[i]][1], header=T))
 }
 
+
+################################################################################
+# Exclude observations that are estimated/frozen:
+################################################################################
+# list of codes: https://help.waterdata.usgs.gov/codes-and-parameters/parameters 
+
+# Get all unique codes in codes table:
+uniqCodes = unique(as.vector(unlist(apply(Master_Code, 2, unique))))
+
+# code description page seems to have recently changed:
+# https://help.waterdata.usgs.gov/codes-and-parameters/discharge-measurement-quality-code
+# A = approved
+# E, E = estimated
+# P = provisional
+# < = underestimated
+# > = overestimated
+# 1, 2 = write protected
+# : = and
+
+# e, E, P, Ice should be removed?
+
+# count number of occurences for codes of interest:
+# x = apply(Master_Code, 2, grep, pattern=" ", ignore.case=T)
+# x = apply(Master_Code, 2, grep, pattern="a", ignore.case=T)
+# x = apply(Master_Code, 2, grep, pattern="ice", ignore.case=T)
+# x = apply(Master_Code, 2, grep, pattern="p", ignore.case=T)
+# x = apply(Master_Code, 2, function(x){which(is.na(x))})
+# x = apply(Master_Code, 2, grep, pattern="p|Ice|E", ignore.case=T)
+# 100*sum(sapply(x, length))/(nrow(Master_Code)*ncol(Master_Code))
+
+# results: 
+# A = approved → 49.20% of records 
+# E, E = estimated → 4.49% 
+# P = provisional → 0.82%
+# < = underestimated
+# > = overestimated
+# 1, 2 = write protected
+# : = and
+# Ice = ice → 0.027%
+# NA = blank → 49.98% 
+
+# exclude Ice, provisional, and estimated codes (set Master_Value cells to NA):
+for (i in 1:ncol(Master_Value)){
+  Master_Value[grep("p|Ice|E", Master_Code[,i], ignore.case=T), i] = NA
+}
+
 ################################################################################
 # Calculate discharge quantiles for Master table
 ################################################################################
