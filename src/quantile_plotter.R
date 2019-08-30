@@ -48,12 +48,14 @@ for (i in 1:length(tabNames)){
 
 
 ################################################################################
-# Exclude observations that are estimated/frozen:
+# Exclude observations that are estimated/provisional/frozen:
 ################################################################################
 # list of codes: https://help.waterdata.usgs.gov/codes-and-parameters/parameters 
 
 # Get all unique codes in codes table:
-uniqCodes = unique(as.vector(unlist(apply(Master_Code, 2, unique))))
+# uniqCodes = unique(as.vector(unlist(apply(Master_Code, 2, unique))))
+# [1] "A"     "A e"   "P"     "P e"   NA      "P Ice" "P Eqp" "P Mnt" "P [4]" "A <"   "A R"  
+# [12] "P Rat" "P ***" "P Ssn" "A >"   "P Bkw" "A [4]"
 
 # code description page seems to have recently changed:
 # https://help.waterdata.usgs.gov/codes-and-parameters/discharge-measurement-quality-code
@@ -87,10 +89,25 @@ uniqCodes = unique(as.vector(unlist(apply(Master_Code, 2, unique))))
 # Ice = ice → 0.027%
 # NA = blank → 49.98% 
 
-# exclude Ice, provisional, and estimated codes (set Master_Value cells to NA):
-for (i in 1:ncol(Master_Value)){
-  Master_Value[grep("p|Ice|E", Master_Code[,i], ignore.case=T), i] = NA
+
+# exclude Ice, provisional, and estimated codes (set value cells to NA):
+qTabVarNames = tabNames[grep("Value", tabNames)]
+cTabVarNames = tabNames[grep("Code", tabNames)]
+
+for (i in 1:length(qTabVarName)){
+  print(paste("excluding low quality observations from", qTabVarName[i]))
+  
+  # get Q and code tabs:
+  qTab = get(qTabVarNames[i])
+  cTab = get(cTabVarNames[i])
+  
+  # run through each column and set problem observations to NA:
+  for (j in 1:ncol(qTab)){
+    qTab[grep("p|Ice|E", cTab[,j], ignore.case=T), j] = NA
+  }
+  assign(qTabVarNames[i], qTab)
 }
+
 
 ################################################################################
 # Calculate discharge quantiles for Master table
@@ -103,26 +120,65 @@ for (i in 1:length(probs)){
   Master_Value_qTab[i,] = as.vector(apply(Master_Value, 2, quantile, probs=probs[i], na.rm=T))
 }
 
+
 ################################################################################
 # Calculate discharge quantiles for individual missions and datasets
 ################################################################################
 qTabList = as.list(tabNames)
-for (i in 1:length(mission)){
-  for (j in 1:length(dataset)){
-    grepStr = paste(mission[i], datatype[2], dataset[j],  sep=".*")
-    tabVarInd = grep(grepStr, tabNames)
-    tabVarName = tabNames[tabVarInd]
-    
-    print(paste0("Calculating percentile values for: ", tabVarName))
-    tab = get(tabVarName)
-    
-    tab_qTab = as.data.frame(array(NA, c(length(probs), ncol(tab))))
-    for (k in 1:length(probs)){
-      tab_qTab[k,] = as.vector(apply(tab, 2, quantile, probs=probs[k], na.rm=T))
-    }
-    qTabList[[tabVarInd]] = tab_qTab
+grepStr = datatype[2]
+tabVarName_raw = grep(grepStr, tabNames, value=T)
+tabVarName = grep("Master", tabVarName_raw, invert=T, value=T)
+
+for (i in 1:length(tabVarName)){
+  print(paste0("Calculating percentile values for: ", tabVarName[i]))
+  tab = get(tabVarName[i])
+  
+  tab_qTab = as.data.frame(array(NA, c(length(probs), ncol(tab))))
+  for (k in 1:length(probs)){
+    tab_qTab[k,] = as.vector(apply(tab, 2, quantile, probs=probs[k], na.rm=T))
   }
+  qTabList[[which(tabVarName[i]==tabNames)]] = tab_qTab
 }
+
+
+################################################################################
+# Calculate discharge quantiles for Landsat 5, 7 and 8 combined:
+################################################################################
+# grepStr = "Value.*CloudsRemoved"
+# tabVarName = grep(grepStr, tabNames, value=T)
+# qTab578 = as.data.frame(array(NA, c(0, ncol(Master_Value))))
+# names(qTab578) = names(Master_Value)
+# 
+# qTabList578 = as.list(tabVarName)
+# 
+# # combine tables:
+# k = 1
+# for (i in 1:length(tabVarName)){
+#   tab = get(tabVarName[i])
+#   m2s_match = match(names(Master_Value), names(tab))
+#   s2m_match = match(names(tab), names(Master_Value))
+#   
+#   qTab578[k:(k+nrow(tab)-1), m2s_match] = tab[, s2m_match]
+#   k = k+nrow(tab)
+# } 
+# 
+# tab_578 = rbind(get(tabVarName[1]),
+#                 get(tabVarName[2]),
+#                 get(tabVarName[3]))
+# 
+# for (i in 1:length(tabVarName)){
+#   print(paste0("Calculating percentile values for: ", tabVarName[i]))
+#   
+#   
+#   tab_578 = rbind(tab)
+#   
+#   tab_qTab = as.data.frame(array(NA, c(length(probs), ncol(tab))))
+#   for (k in 1:length(probs)){
+#     tab_qTab[k,] = as.vector(apply(tab, 2, quantile, probs=probs[k], na.rm=T))
+#   }
+#   qTabList[[which(tabVarName[i]==tabNames)]] = tab_qTab
+# }
+
 
 ################################################################################
 # plot discharge quantiles
@@ -140,6 +196,9 @@ layout(matrix(c(1,1,1,1,
 
 plotInd = which(lapply(qTabList, length) > 1)
 
+xRange = c(min(Master_Value_qTab[Master_Value_qTab>0], na.rm=T), 
+           max(Master_Value_qTab, na.rm=T))
+
 for (i in 1:length(plotInd)){
   sTab = qTabList[[plotInd[i]]]
   m2s_match = match(names(Master_Value_qTab), names(sTab))
@@ -156,7 +215,8 @@ for (i in 1:length(plotInd)){
          main="",
          xlab="Qpopulation (cms)",
          ylab="Qsample (cms)",
-         log="xy", asp=1, 
+         log="xy", 
+         xlim=xRange, ylim=xRange,
          pch=16, cex=0.8, col=rgb(0,0,0,0.2))
     title(paste0("Quantile: ", probs[j]*100, "%"), line=-1)
     abline(0, 1, lwd=0.5)
@@ -182,6 +242,8 @@ for (i in 1:length(plotInd)){
 dev.off()
 cmd = paste('open', pdfOutPath)
 system(cmd)
+
+
 
 
 
