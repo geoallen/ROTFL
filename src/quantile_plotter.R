@@ -120,11 +120,10 @@ for (i in 1:length(probs)){
   Master_Value_qTab[i,] = as.vector(apply(Master_Value, 2, quantile, probs=probs[i], na.rm=T))
 }
 
-
 ################################################################################
 # Calculate discharge quantiles for individual missions and datasets
 ################################################################################
-qTabList = as.list(tabNames)
+qTabListIndiv = as.list(tabNames)
 grepStr = datatype[2]
 tabVarName_raw = grep(grepStr, tabNames, value=T)
 tabVarName = grep("Master", tabVarName_raw, invert=T, value=T)
@@ -137,47 +136,32 @@ for (i in 1:length(tabVarName)){
   for (k in 1:length(probs)){
     tab_qTab[k,] = as.vector(apply(tab, 2, quantile, probs=probs[k], na.rm=T))
   }
-  qTabList[[which(tabVarName[i]==tabNames)]] = tab_qTab
+  qTabListIndiv[[which(tabVarName[i]==tabNames)]] = tab_qTab
 }
 
 
 ################################################################################
 # Calculate discharge quantiles for Landsat 5, 7 and 8 combined:
 ################################################################################
-# grepStr = "Value.*CloudsRemoved"
-# tabVarName = grep(grepStr, tabNames, value=T)
-# qTab578 = as.data.frame(array(NA, c(0, ncol(Master_Value))))
-# names(qTab578) = names(Master_Value)
-# 
-# qTabList578 = as.list(tabVarName)
-# 
-# # combine tables:
-# k = 1
-# for (i in 1:length(tabVarName)){
-#   tab = get(tabVarName[i])
-#   m2s_match = match(names(Master_Value), names(tab))
-#   s2m_match = match(names(tab), names(Master_Value))
-#   
-#   qTab578[k:(k+nrow(tab)-1), m2s_match] = tab[, s2m_match]
-#   k = k+nrow(tab)
-# } 
-# 
-# tab_578 = rbind(get(tabVarName[1]),
-#                 get(tabVarName[2]),
-#                 get(tabVarName[3]))
-# 
-# for (i in 1:length(tabVarName)){
-#   print(paste0("Calculating percentile values for: ", tabVarName[i]))
-#   
-#   
-#   tab_578 = rbind(tab)
-#   
-#   tab_qTab = as.data.frame(array(NA, c(length(probs), ncol(tab))))
-#   for (k in 1:length(probs)){
-#     tab_qTab[k,] = as.vector(apply(tab, 2, quantile, probs=probs[k], na.rm=T))
-#   }
-#   qTabList[[which(tabVarName[i]==tabNames)]] = tab_qTab
-# }
+
+qTabList578 = as.list(dataset)
+
+for (i in 1:length(dataset)){
+  grepStr = paste0(datatype[2], ".*", dataset[i])
+  tabVarName = grep(grepStr, tabNames, value=T)
+  
+  print(paste0("Calculating percentile values for: ", dataset[i]))
+  tab = rbind(get(tabVarName[1]), get(tabVarName[2]), get(tabVarName[3]))
+  
+  tab_qTab = as.data.frame(array(NA, c(length(probs), ncol(tab))))
+  for (k in 1:length(probs)){
+    tab_qTab[k,] = as.vector(apply(tab, 2, quantile, probs=probs[k], na.rm=T))
+  }
+  qTabList578[[i]] = tab_qTab
+}
+
+# combine lists: 
+qTabList = c(qTabListIndiv, qTabList578)
 
 
 ################################################################################
@@ -194,17 +178,21 @@ layout(matrix(c(1,1,1,1,
               10,11,12,13), nrow=4, byrow=T),
        heights = c(1,4,4,4,4))
 
+# remove zero (no flow) or negative (reverse flow) values from master qTab:
+Master_Value_qTab[Master_Value_qTab<=0] = NA
+xRange = range(Master_Value_qTab, na.rm=T)
+
+# plot computed samples: 
 plotInd = which(lapply(qTabList, length) > 1)
-
-xRange = c(min(Master_Value_qTab[Master_Value_qTab>0], na.rm=T), 
-           max(Master_Value_qTab, na.rm=T))
-
 for (i in 1:length(plotInd)){
   sTab = qTabList[[plotInd[i]]]
+  # remove zero (no flow) or negative (reverse flow) values from qTab:
+  sTab[sTab<=0] = NA
+  
   m2s_match = match(names(Master_Value_qTab), names(sTab))
   
   plot.new()
-  text(0.5, 0.5, gsub("_", " ", tabNames[plotInd[i]]), cex=2, font=2)
+  text(0.5, 0.5, gsub("_", " ", c(tabNames, dataset)[plotInd[i]]), cex=2, font=2)
   
   for (j in 1:length(probs)){
     
@@ -221,6 +209,9 @@ for (i in 1:length(plotInd)){
     title(paste0("Quantile: ", probs[j]*100, "%"), line=-1)
     abline(0, 1, lwd=0.5)
   
+    # Equivalency test:
+    
+    
     # Wilcox non-parametrix inferential test:
     # p-val>0.01 means that sample is not statistically different than population:
     wilcox = wilcox.test(Qsam_cms, Qpop_cms, "two.sided", exact=F)
@@ -236,7 +227,9 @@ for (i in 1:length(plotInd)){
     #      paste("t-test p-value =", tTest$p.value), pos=2)
     
   }
+  
   plot.new()
+  
 }
 
 dev.off()
