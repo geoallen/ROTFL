@@ -11,6 +11,8 @@
 # runs wilcox (Mann-Whitney) non-parametric test to determine if sample is  
 # statistically different than population. 
 
+install.packages("zyp")
+library(zyp)
 
 # specify working directory:
 wd = "/Users/allenstandard/research/2019_08_19_ROTFL/git/ROTFL"
@@ -209,22 +211,67 @@ for (i in 1:length(plotInd)){
     title(paste0("Quantile: ", probs[j]*100, "%"), line=-1)
     abline(0, 1, lwd=0.5)
   
-    # Equivalency test:
+    # Equivalence test: https://en.wikipedia.org/wiki/Equivalence_test
+    # https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3019319/#CR2
+    # https://link.springer.com/content/pdf/10.1007%2FBF01068419.pdf
+    
+    # the equivalence margin, denoted by δ, defines a range of values for which the efficacies 
+    # are “close enough” to be considered equivalent.
+    # α significance level if a (1–2α) × 100% 
+    
+    # 'Two One-Sided Tests’ (TOST) procedure:
+    # parametric t-test is likely not correct test due to apparent heteroskedasticity:
     
     
-    # Wilcox non-parametrix inferential test:
-    # p-val>0.01 means that sample is not statistically different than population:
+    # gt_pVal = t.test(Qsam_cms, Qpop_cms, alternative="greater")$p.value
+    # lt_pVal = t.test(Qsam_cms, Qpop_cms, alternative="less")$p.value    
+    
+    # Noparametric two-one-sided wilcox rank sum test procedure:
+    # gt_pVal = wilcox.test(Qsam_cms, Qpop_cms, alternative="greater", exact=F)$p.value
+    # lt_pVal = wilcox.test(Qsam_cms, Qpop_cms, alternative="less", exact=F)$p.value
+    
+    # add a regression line: 
+    #reg = lm( log(Qsam_cms) ~ log(Qpop_cms) )  # least squares in log space
+    
+    
+    # Thiel-Sen nonparametric median estimator:
+    x = log(Qpop_cms[!(is.na(Qpop_cms) | is.na(Qsam_cms))])
+    y = log(Qsam_cms[!(is.na(Qpop_cms) | is.na(Qsam_cms))])
+    reg = zyp.sen(y~x)
+    # add best fit line:
+    xSeq = seq(xRange[1], xRange[2], length.out=100)
+    ySeq = exp(reg[[1]][[1]]) * xSeq^reg[[1]][[2]]
+    lines(xSeq, ySeq, col=2)
+    
+    rRMSE = sqrt(sum(((Qsam_cms - Qpop_cms)/Qpop_cms)^2, na.rm=T)/length(Qpop_cms))
+    rBIAS = sum((Qsam_cms - Qpop_cms)/Qpop_cms, na.rm=T)/length(Qpop_cms)
+    
+    # KS test:
+    ks = suppressWarnings(ks.test(Qsam_cms, Qpop_cms, "two.sided"))
+    
+    # # Wilcox non-parametrix inferential test:
+    # # p-val>0.01 means that sample is not statistically different than population:
     wilcox = wilcox.test(Qsam_cms, Qpop_cms, "two.sided", exact=F)
-    if (wilcox$p.value < 1e-3){
-      legend("bottomright", "Wilcox p-value < 0.001")
-    }else{
-      legend("bottomright", paste("Wilcox p-value =", round(wilcox$p.value, 3)))
-    }
+    # if (wilcox$p.value < 1e-3){
+    #   legend("bottomright", "Wilcox p-value < 0.001")
+    # }else{
+    #   legend("bottomright", paste("Wilcox p-value =", round(wilcox$p.value, 3)))
+    # }
     
-    # parametric t-test (likely not correct test due to apparent heteroskedasticity):
     # tTest = t.test(Qsam_cms, Qpop_cms)
     # text(max(Qpop_cms, na.rm=T), min(Qsam_cms, na.rm=T), 
     #      paste("t-test p-value =", tTest$p.value), pos=2)
+    
+    legend("bottomright", 
+           paste("y =",  "e^", round(reg[[1]][[1]], 2), "* x^", round(reg[[1]][[2]], 2), 
+                 "\n rRMSE:",  round(rRMSE, 2),
+                 "\n rBIAS:",  round(rBIAS, 2),
+                 "\n K-S D:",  round(ks[[1]][[1]], 2),
+                 "\n K-S p:",  round(ks[[2]][[1]], 4),
+                 "\n Wilcox p:", round(wilcox$p.value, 4)),
+           bty="n", adj=c(0,-0.25))
+
+    if (ks[[2]][[1]] < 0.05 ){ box(col=2, lwd=2) }
     
   }
   
