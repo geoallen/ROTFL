@@ -1,5 +1,7 @@
 ####create subset discharge records using dates of cloud-free landsat imagery###############
 ############################################################################################
+# Author: Joel Holliman
+
 library(dataRetrieval)
 #load tables of dates 
 GaugeNumbers <- read.csv(file="c:L8CloudRemoved.csv", sep=",",header=TRUE)

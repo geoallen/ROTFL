@@ -50,68 +50,6 @@ for (i in 1:length(tabNames)){
 
 
 ################################################################################
-# Exclude observations that are estimated/provisional/frozen:
-################################################################################
-# list of codes: https://help.waterdata.usgs.gov/codes-and-parameters/parameters 
-
-# Get all unique codes in codes table:
-# uniqCodes = unique(as.vector(unlist(apply(Master_Code, 2, unique))))
-# [1] "A"     "A e"   "P"     "P e"   NA      "P Ice" "P Eqp" "P Mnt" "P [4]" "A <"   "A R"  
-# [12] "P Rat" "P ***" "P Ssn" "A >"   "P Bkw" "A [4]"
-
-# code description page seems to have recently changed:
-# https://help.waterdata.usgs.gov/codes-and-parameters/discharge-measurement-quality-code
-# A = approved
-# E, E = estimated
-# P = provisional
-# < = underestimated
-# > = overestimated
-# 1, 2 = write protected
-# : = and
-
-# e, E, P, Ice should be removed?
-
-# count number of occurences for codes of interest:
-# x = apply(Master_Code, 2, grep, pattern=" ", ignore.case=T)
-# x = apply(Master_Code, 2, grep, pattern="a", ignore.case=T)
-# x = apply(Master_Code, 2, grep, pattern="ice", ignore.case=T)
-# x = apply(Master_Code, 2, grep, pattern="p", ignore.case=T)
-# x = apply(Master_Code, 2, function(x){which(is.na(x))})
-# x = apply(Master_Code, 2, grep, pattern="p|Ice|E", ignore.case=T)
-# 100*sum(sapply(x, length))/(nrow(Master_Code)*ncol(Master_Code))
-
-# results: 
-# A = approved → 49.20% of records 
-# E, E = estimated → 4.49% 
-# P = provisional → 0.82%
-# < = underestimated
-# > = overestimated
-# 1, 2 = write protected
-# : = and
-# Ice = ice → 0.027%
-# NA = blank → 49.98% 
-
-
-# exclude Ice, provisional, and estimated codes (set value cells to NA):
-qTabVarNames = tabNames[grep("Value", tabNames)]
-cTabVarNames = tabNames[grep("Code", tabNames)]
-
-for (i in 1:length(qTabVarName)){
-  print(paste("excluding low quality observations from", qTabVarName[i]))
-  
-  # get Q and code tabs:
-  qTab = get(qTabVarNames[i])
-  cTab = get(cTabVarNames[i])
-  
-  # run through each column and set problem observations to NA:
-  for (j in 1:ncol(qTab)){
-    qTab[grep("p|Ice|E", cTab[,j], ignore.case=T), j] = NA
-  }
-  assign(qTabVarNames[i], qTab)
-}
-
-
-################################################################################
 # Calculate discharge quantiles for Master table
 ################################################################################
 probs = seq(0, 1, 0.1)

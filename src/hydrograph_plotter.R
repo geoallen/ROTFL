@@ -43,68 +43,6 @@ for (i in 1:length(tabNames)){
 
 
 ################################################################################
-# Exclude observations that are estimated/provisional/frozen:
-################################################################################
-# list of codes: https://help.waterdata.usgs.gov/codes-and-parameters/parameters 
-
-# Get all unique codes in codes table:
-# uniqCodes = unique(as.vector(unlist(apply(Master_Code, 2, unique))))
-# [1] "A"     "A e"   "P"     "P e"   NA      "P Ice" "P Eqp" "P Mnt" "P [4]" "A <"   "A R"  
-# [12] "P Rat" "P ***" "P Ssn" "A >"   "P Bkw" "A [4]"
-
-# code description page seems to have recently changed:
-# https://help.waterdata.usgs.gov/codes-and-parameters/discharge-measurement-quality-code
-# A = approved
-# E, E = estimated
-# P = provisional
-# < = underestimated
-# > = overestimated
-# 1, 2 = write protected
-# : = and
-
-# e, E, P, Ice should be removed?
-
-# count number of occurences for codes of interest:
-# x = apply(Master_Code, 2, grep, pattern=" ", ignore.case=T)
-# x = apply(Master_Code, 2, grep, pattern="a", ignore.case=T)
-# x = apply(Master_Code, 2, grep, pattern="ice", ignore.case=T)
-# x = apply(Master_Code, 2, grep, pattern="p", ignore.case=T)
-# x = apply(Master_Code, 2, function(x){which(is.na(x))})
-# x = apply(Master_Code, 2, grep, pattern="p|Ice|E", ignore.case=T)
-# 100*sum(sapply(x, length))/(nrow(Master_Code)*ncol(Master_Code))
-
-# results: 
-# A = approved → 49.20% of records 
-# E, E = estimated → 4.49% 
-# P = provisional → 0.82%
-# < = underestimated
-# > = overestimated
-# 1, 2 = write protected
-# : = and
-# Ice = ice → 0.027%
-# NA = blank → 49.98% 
-
-
-# exclude Ice, provisional, and estimated codes (set value cells to NA):
-qTabVarNames = tabNames[grep("Value", tabNames)]
-cTabVarNames = tabNames[grep("Code", tabNames)]
-
-for (i in 1:length(qTabVarName)){
-  print(paste("excluding low quality observations from", qTabVarName[i]))
-  
-  # get Q and code tabs:
-  qTab = get(qTabVarNames[i])
-  cTab = get(cTabVarNames[i])
-  
-  # run through each column and set problem observations to NA:
-  for (j in 1:ncol(qTab)){
-    qTab[grep("p|Ice|E", cTab[,j], ignore.case=T), j] = NA
-  }
-  assign(qTabVarNames[i], qTab)
-}
-
-
-################################################################################
 # Combine missions and put in list of list of tables:
 ################################################################################
 tabList578 = as.list(datatype)
@@ -148,31 +86,40 @@ Qtab_ar = tabList578[[2]][[2]]
 
 gaugeID = names(Master_Value)
 
+par(mar=c(4,4,1,1))
+layout(matrix(c(1,2), ncol=2, byrow=T),
+       widths = c(1,4))
+
 # for each gauge:
 for (i in 1:ncol(Master_Value)){
   
+  # master tables:
   Date = as.Date(as.POSIXct(Master_Date[,i], origin="1970-01-01"))
   Q_cms = Master_Value[,i]*0.028316846592
+  # all returns samples:
+  Date_ar = as.Date(as.POSIXct(Dtab_ar[,i], origin="1970-01-01"))
+  Q_cms_ar = Qtab_ar[,i]*0.028316846592
+  # cloud free samples:
+  Date_cf = as.Date(as.POSIXct(Dtab_cf[,i], origin="1970-01-01"))
+  Q_cms_cf = Qtab_cf[,i]*0.028316846592
+  
+  # plot density distributions on y-axis:
+  kern = density(Q_cms, na.rm=T)
+  plot(kern$y, kern$x, type="l",
+       xlab = "Density",
+       ylab = "Discharge (cms)",
+       bty="n")
+  kern = density(Q_cms_ar, na.rm=T)
+  lines(kern$y, kern$x, col="blue")
+  kern = density(Q_cms_cf, na.rm=T)
+  lines(kern$y, kern$x,bty="n", col="red")
+  
   
   plot(Date, Q_cms, type="l", 
     main=paste("Site:", sub("X", "", gaugeID[i])), 
     lwd=0.4)
-    
-  # add all returns samples:
-  Date_ar = as.Date(as.POSIXct(Dtab_ar[,i], origin="1970-01-01"))
-  Q_cms_ar = Qtab_ar[,i]*0.028316846592
-  
-  points(Date_ar, Q_cms_ar)
-  
-  # add cloud free samples:
-  Date_cf = as.Date(as.POSIXct(Dtab_cf[,i], origin="1970-01-01"))
-  Q_cms_cf = Qtab_cf[,i]*0.028316846592
-  
-  points(Date_cf, Q_cms_cf, pch=3, col=2)
-  
-  # plot distributions on y-axis:
-  
-  # coming soon
+  points(Date_ar, Q_cms_ar, cex=0.8, col="blue")
+  points(Date_cf, Q_cms_cf, pch=3, cex=0.8, col="red")
   
 }
 
