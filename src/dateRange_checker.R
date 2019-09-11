@@ -14,7 +14,7 @@ wd = "/Users/allenstandard/research/2019_08_19_ROTFL/git/ROTFL"
 # Read in all CSVs
 ################################################################################
 # put all tables from Drive folder into the "in" directory:
-inDirPath = paste0(wd, '/in')
+inDirPath = paste0(wd, '/in/cleaned')
 if (!file.exists(inDirPath)){dir.create(inDirPath)}
 CSVpaths_all = list.files(inDirPath, ".csv", recursive=T, full.names=T)
 

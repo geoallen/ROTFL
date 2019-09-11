@@ -14,7 +14,7 @@ wd = "/Users/allenstandard/research/2019_08_19_ROTFL/git/ROTFL"
 # Read in all CSVs
 ################################################################################
 # put all tables from Drive folder into the "in" directory:
-inDirPath = paste0(wd, '/in')
+inDirPath = paste0(wd, '/in/cleaned')
 if (!file.exists(inDirPath)){dir.create(inDirPath)}
 CSVpaths_all = list.files(inDirPath, ".csv", recursive=T, full.names=T)
 
@@ -86,13 +86,12 @@ Qtab_ar = tabList578[[2]][[2]]
 
 gaugeID = names(Master_Value)
 
-par(mar=c(4,4,1,1))
-layout(matrix(c(1,2), ncol=2, byrow=T),
-       widths = c(1,4))
+
+
 
 # for each gauge:
 for (i in 1:ncol(Master_Value)){
-  
+  #print(i)
   # master tables:
   Date = as.Date(as.POSIXct(Master_Date[,i], origin="1970-01-01"))
   Q_cms = Master_Value[,i]*0.028316846592
@@ -103,27 +102,58 @@ for (i in 1:ncol(Master_Value)){
   Date_cf = as.Date(as.POSIXct(Dtab_cf[,i], origin="1970-01-01"))
   Q_cms_cf = Qtab_cf[,i]*0.028316846592
   
+  if (length(which(!is.na(Date))) < 365*5){next}
+  
+
+  
   # plot density distributions on y-axis:
-  kern = density(Q_cms, na.rm=T)
+  layout(matrix(c(1,2), ncol=2, byrow=T),
+         widths = c(1,3))
+  
+  par(mar=c(4,4,1,0))
+  kern = density(Q_cms, na.rm=T, bw="nrd0")
+  kern_ar = density(Q_cms_ar, na.rm=T, bw="nrd0")
+  kern_cf = density(Q_cms_cf, na.rm=T, bw="nrd0")
   plot(kern$y, kern$x, type="l",
+       ylim = range(Q_cms, na.rm=T),
+       xlim = range(c(kern$y, kern_ar$y, kern_cf$y)), 
        xlab = "Density",
        ylab = "Discharge (cms)",
+       axes=T,
+       yaxt="n",
        bty="n")
-  kern = density(Q_cms_ar, na.rm=T)
-  lines(kern$y, kern$x, col="blue")
-  kern = density(Q_cms_cf, na.rm=T)
-  lines(kern$y, kern$x,bty="n", col="red")
+  lines(kern_ar$y, kern_ar$x, col="blue")
+  lines(kern_cf$y, kern_cf$x, bty="n", col="red")
   
   
+  # plot hydrograph and sampling time:
+  par(mar=c(4,0,1,1))
   plot(Date, Q_cms, type="l", 
-    main=paste("Site:", sub("X", "", gaugeID[i])), 
-    lwd=0.4)
-  points(Date_ar, Q_cms_ar, cex=0.8, col="blue")
-  points(Date_cf, Q_cms_cf, pch=3, cex=0.8, col="red")
+       ylim=range(Q_cms, na.rm=T),
+       xlab="Date", ylab="",
+       bty="n",
+       yaxt="n",
+       lwd=0.4)
+  points(Date_ar, Q_cms_ar, cex=0.4, col="blue")
+  points(Date_cf, Q_cms_cf, pch=3, cex=0.4, col="red")
+  
+  
+  # add horizontal lines to plot:
+  par(new=T)
+  layout(matrix(c(1,1), ncol=2, byrow=T),
+         widths = c(1,3))
+  par(mar=c(4,4,1,1))
+  plot(Date, Q_cms, type="n", 
+       ylim=range(Q_cms, na.rm=T), 
+       bty="n", axes=F, xlab="", ylab="",
+       main=paste("Site:", sub("X", "", gaugeID[i])))
+  abline(h=axis(2), lwd=0.2)
+  box()
+  
+  legend("topright", c("Full gauge record", "All returns", "Clear sky returns"), 
+         text.col=c(1, 4, 2), cex=0.8, bg="white")
   
 }
-
-
 
 
 dev.off()
