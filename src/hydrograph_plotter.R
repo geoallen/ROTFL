@@ -87,8 +87,6 @@ Qtab_ar = tabList578[[2]][[2]]
 gaugeID = names(Master_Value)
 
 
-
-
 # for each gauge:
 for (i in 1:ncol(Master_Value)){
   #print(i)
