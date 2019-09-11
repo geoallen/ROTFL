@@ -7,11 +7,15 @@ library(lubridate)
 library(modeest)
 library(sf)
 library(mapview)
+library(feather)
+library(equivalence)
+library(ggthemes)
+
 
 ### load data
 wd <- "D:/GoogleDrive/ROTFL"
 
-inDirPath = paste0(wd, '/in')
+inDirPath = paste0(wd, '/in/cleaned')
 if (!file.exists(inDirPath)){dir.create(inDirPath)}
 CSVpaths_all = list.files(inDirPath, ".csv", recursive=T, full.names=T)
 
@@ -122,29 +126,35 @@ ls_all <- bind_rows(ls5, ls7, ls8) %>%
 #   filter(n >1) %>%
 #   arrange(site, date, flow_sample)
 
+# write data
+#write_feather(ms_data, "out/master_data_long.feather")
+
+#write_feather(ls_all, "out/ls_data_long.feather")
+
+######################################################
+ms_data <- read_feather("out/master_data_long.feather")
+
+ls_all <- read_feather("out/ls_data_long.feather")
+
 
 ### join landsat "sampled" flow to master "population" flow
 ms_join <- ms_data %>%
   rename(flow_pop = flow) %>%
-  left_join(ls_all, by=c("site", "date")) %>%
-# remove data with ice IF is estimated Q/ice AND winter month 
-  mutate(month = month(date),
-         ice_flag = ifelse(grepl("e", code) ==T, "ice", NA),
-         winter = ifelse(month %in% c(11,12,1,2), "winter", NA),
-         ice_winter = ifelse(ice_flag =="ice" & winter =="winter", "ice", NA)) %>%
-  filter(is.na(ice_winter),
-         flow_pop >=0)
+  left_join(ls_all, by=c("site", "date")) 
 
+
+#write_feather(ms_join, "out/ms_ls_clean.feather")
 # But we can use this to take quick looks at the distributions of Q for a few sites.
 # change the index numbers to pan around other sites
 ms_join %>%
- # dplyr::filter(site %in% unique(site)[100:120]) %>%
-  dplyr::filter(site=="7139000") %>%
+  dplyr::filter(site %in% unique(site)[700:709]) %>%
+ # dplyr::filter(site=="7139000") %>%
   ggplot() +
-  geom_histogram(aes(flow_pop), fill="red", alpha=0.5) +
-  geom_histogram(aes(flow_sample), fill="blue", alpha=0.5) +
+  geom_density(aes(flow_pop), color="black") +
+  geom_density(aes(flow_sample), color="red") +
 #  scale_x_log10() +
-  scale_y_log10() +
+  scale_x_log10() +
+  theme_few() +
   facet_wrap(~site, scales="free")
 
 # make look up table of population flow percentiles by site to later join
@@ -196,38 +206,91 @@ mapview(join_sum_site, zcol='percentile_range_sample', legend=T )
 mapview(join_sum_site, zcol='mode_ratio', legend=T )
 
 
+test <- ms_join %>% filter(site == "6038800")
+
+ggplot(test)+
+  geom_histogram(aes(flow_pop), color="black") +
+  geom_histogram(aes(flow_sample), color="red") +
+  scale_x_log10() +
+  scale_y_log10() 
+  
+  
+tost(log(test$flow_pop), log(test$flow_sample), paired = F, var.equal = F, conf.level = 0.95)
+
+shifthd((test$flow_pop), (test$flow_sample))
+
+wilcox.test(test$flow_pop, test$flow_sample, 
+            exact = FALSE, correct = FALSE)
+
+
+
+library(stats)
+
 # >90% of gages capture 97% perecntiles of flow
 ggplot(join_sum_site) +
   geom_histogram(aes(percentile_range_sample)) +
-  scale_y_log10()
+  scale_y_log10() +
+  xlab("Range of flow percentiles sampled by LS5,7,8") +
+  ylab("# of gages") +
+  theme_few()
+
+#ggsave(paste('figs/', "range_captured.jpeg", sep=""), units='in', width = 5, height=5)
+
+  
 
 # most gages capture close to modal Q. Landsat slightly underestimates on average
 ggplot(join_sum) +
   geom_density(aes(mode_ratio), fill="grey") +
-  xlim(0, 3.5)+
+  xlim(0, 5)+
   theme_bw() +
-  geom_vline(xintercept=1, col="red")
+  geom_vline(xintercept=1, col="red") +
+  xlab("Sample Modal Q / Pop Modal Q")
+
+#ggsave(paste('figs/', "modalQ_hist.jpeg", sep=""), units='in', width = 6, height=4)
+
 
 ggplot(join_sum_site) +
   geom_point(aes(flow_pop_mode, flow_sample_mode)) +
-  scale_y_log10() +
-  scale_x_log10() +
-  geom_abline(intercept=0, slope=1, col="red")
+  scale_y_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
+                labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  scale_x_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
+                labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  geom_abline(intercept=0, slope=1, col="red") +
+  theme_few() +
+  xlab("Modal Q (population)") +
+  ylab("Modal Q (sample)")
+
+#ggsave(paste('figs/', "modalQ_captured.jpeg", sep=""), units='in', width = 5, height=5)
+
+
 
 # does the length of the Q record (population) impact how well? Not really
 ggplot(join_sum_site) +
   geom_point(aes(ndays_pop, mode_ratio)) +
-  scale_x_log10() +
+  scale_x_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
+                labels = scales::trans_format("log10", scales::math_format(10^.x))) +
   scale_y_log10() +
+
   geom_hline(yintercept=1, col="red")
 
 # does watershed area affect how well landsat represents modal Q?
 # Yes, there is a convergence to better representation as Area increases
 ggplot(join_sum_site) +
   geom_point(aes(drain_area_va, mode_ratio)) +
-  scale_x_log10() +
-  scale_y_log10() +
-  geom_hline(yintercept=1, col="red")
+  scale_x_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
+                labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  scale_y_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
+                labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  ylim(0.2,5) +
+  geom_hline(yintercept=1, col="red") +
+  theme_few() +
+  ylab("") +
+  xlab("Drainage area (mi^2)") +
+  ylab("Sample Modal Q / Pop Modal Q")
+
+#ggsave(paste('figs/', "modalQ_drainage_area.jpeg", sep=""), units='in', width = 5, height=5)
+
+
 
 # ms_join %>%
 #   # dplyr::filter(site %in% unique(site)[1:20]) %>%
@@ -238,7 +301,46 @@ ggplot(join_sum_site) +
 #  
 
 
-
-
-
+shifthd<-function(x,y,nboot=200){
+  #
+  #   Compute confidence intervals for the difference between deciles
+  #   of two independent groups. The simultaneous probability coverage is .95.
+  #   The Harrell-Davis estimate of the qth quantile is used.
+  #   The default number of bootstrap samples is nboot=200
+  #
+  #   The results are stored and returned in a 9 by 5 matrix,
+  #   the ith row corresponding to the i/10 quantile.
+  #   The first column is the lower end of the confidence interval.
+  #   The second column is the upper end.
+  #   The third column is the estimated difference between the deciles
+  #   (second group minus first).
+  #
+  # Modified from Rallfun-v31: GAR - University of Glasgow - 2016-06-22
+  # simplified inputs/outputs to make independent figures
+  # changed difference to x-y instead of y-x for consistency across functions
+  # now outputs confidence intervals, similarly to shiftdhd
+  # changed labels to reflect nature of data: 'groups' here, 'conditions' for shiftdhd
+  # now returns a data frame for use with ggplot2
+  x<-x[!is.na(x)]
+  y<-y[!is.na(y)]
+  crit<-80.1/(min(length(x),length(y)))^2+2.73
+  m<-matrix(0,9,5)
+  for (d in 1:9){
+    q<-d/10
+    data<-matrix(sample(x,size=length(x)*nboot,replace=TRUE),nrow=nboot)
+    bvec<-apply(data,1,hd,q)
+    sex<-var(bvec)
+    data<-matrix(sample(y,size=length(y)*nboot,replace=TRUE),nrow=nboot)
+    bvec<-apply(data,1,hd,q)
+    sey<-var(bvec)
+    m[d,1]<-hd(x,q)
+    m[d,2]<-hd(y,q)
+    m[d,3]<-m[d,1]-m[d,2]
+    m[d,4]<-m[d,3]-crit*sqrt(sex+sey)
+    m[d,5]<-m[d,3]+crit*sqrt(sex+sey)
+  }
+  out<-data.frame(m)
+  names(out)<-c('group1','group2','difference','ci_lower','ci_upper')
+  out
+}
 
