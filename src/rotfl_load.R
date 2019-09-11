@@ -10,6 +10,10 @@ library(mapview)
 library(feather)
 library(equivalence)
 library(ggthemes)
+library(stats)
+library(MASS)
+#devtools::install_github("GRousselet/rogme")
+library(rogme)
 
 
 ### load data
@@ -147,7 +151,7 @@ ms_join <- ms_data %>%
 # But we can use this to take quick looks at the distributions of Q for a few sites.
 # change the index numbers to pan around other sites
 ms_join %>%
-  dplyr::filter(site %in% unique(site)[700:709]) %>%
+  dplyr::filter(site %in% unique(site)[170:190]) %>%
  # dplyr::filter(site=="7139000") %>%
   ggplot() +
   geom_density(aes(flow_pop), color="black") +
@@ -205,26 +209,78 @@ join_sum_site <- join_sum %>%
 mapview(join_sum_site, zcol='percentile_range_sample', legend=T )
 mapview(join_sum_site, zcol='mode_ratio', legend=T )
 
+#############################################################
+#### Test out different statistics for assessind difference in distribution
 
-test <- ms_join %>% filter(site == "6038800")
+## pick to example sites
+# site that has the same distribution
+good <- ms_join %>% filter(site == "6038800")
 
-ggplot(test)+
-  geom_histogram(aes(flow_pop), color="black") +
-  geom_histogram(aes(flow_sample), color="red") +
+# site that should have different distribution
+bad <- ms_join %>% filter(site == "14312000")
+#3314500, #3287000, 1351500, 14312000, 
+
+good_long <- good %>%
+  dplyr::select(flow_pop, flow_sample) %>%
+  gather( key = "group", value = "flow") %>%
+  drop_na() %>%
+  mutate(group = as.factor(group)) %>%
+  as_tibble()
+
+bad_long <- bad %>%
+  dplyr::select(flow_pop, flow_sample) %>%
+  gather( key = "group", value = "flow") %>%
+  drop_na() %>%
+  mutate(group = as.factor(group)) %>%
+  as_tibble()
+
+
+ggplot(good_long)+
+  geom_histogram(aes(flow, fill = group)) +
   scale_x_log10() +
   scale_y_log10() 
-  
-  
-tost(log(test$flow_pop), log(test$flow_sample), paired = F, var.equal = F, conf.level = 0.95)
 
-shifthd((test$flow_pop), (test$flow_sample))
-
-wilcox.test(test$flow_pop, test$flow_sample, 
-            exact = FALSE, correct = FALSE)
+ggplot(bad_long)+
+  geom_histogram(aes(flow, fill = group)) +
+  scale_x_log10() +
+  scale_y_log10() 
 
 
 
-library(stats)
+## ks test
+# says distributions are not different p > 0.05, D = 0.03
+ks.test(good$flow_pop, good$flow_sample)
+
+# says distributions are different p < 0.05, D = .26
+ks.test(bad$flow_pop, bad$flow_sample)
+
+
+## equivalence test , this test says both good/bad are the same distribution
+tost(log(good$flow_pop), log(good$flow_sample), paired = F, var.equal = F, conf.level = 0.95)
+
+tost(log(bad$flow_pop), log(bad$flow_sample), paired = F, var.equal = F, conf.level = 0.95)
+
+
+## try shift test that looks for difference between any quantile.
+## this test takes about 3 minutes
+shift_good <- rogme::shifthd_pbci(data=good_long, flow ~ group, q=c(0.25, 0.5, 0.75)) 
+
+shift_bad <- rogme::shifthd_pbci(data=bad_long, flow ~ group, q=c(0.25, 0.5, 0.75)) 
+
+# all qunatiles have P > 0.05 and distributions are the same
+shift_good
+# all qunatiles have P < 0.05 and disttributions are different
+shift_bad
+
+rogme::plot_sf(shift_good, plot_theme = 2)[[1]] 
+
+rogme::plot_sf(shift_bad, plot_theme = 2)[[1]] 
+
+                      
+
+
+#####################################################
+### other plots 
 
 # >90% of gages capture 97% perecntiles of flow
 ggplot(join_sum_site) +
@@ -248,7 +304,6 @@ ggplot(join_sum) +
 
 #ggsave(paste('figs/', "modalQ_hist.jpeg", sep=""), units='in', width = 6, height=4)
 
-
 ggplot(join_sum_site) +
   geom_point(aes(flow_pop_mode, flow_sample_mode)) +
   scale_y_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
@@ -261,8 +316,6 @@ ggplot(join_sum_site) +
   ylab("Modal Q (sample)")
 
 #ggsave(paste('figs/', "modalQ_captured.jpeg", sep=""), units='in', width = 5, height=5)
-
-
 
 # does the length of the Q record (population) impact how well? Not really
 ggplot(join_sum_site) +
@@ -291,7 +344,6 @@ ggplot(join_sum_site) +
 #ggsave(paste('figs/', "modalQ_drainage_area.jpeg", sep=""), units='in', width = 5, height=5)
 
 
-
 # ms_join %>%
 #   # dplyr::filter(site %in% unique(site)[1:20]) %>%
 #   dplyr::filter(site=="7139000") %>%
@@ -299,48 +351,3 @@ ggplot(join_sum_site) +
 #   geom_line() +
 #   scale_y_log10()
 #  
-
-
-shifthd<-function(x,y,nboot=200){
-  #
-  #   Compute confidence intervals for the difference between deciles
-  #   of two independent groups. The simultaneous probability coverage is .95.
-  #   The Harrell-Davis estimate of the qth quantile is used.
-  #   The default number of bootstrap samples is nboot=200
-  #
-  #   The results are stored and returned in a 9 by 5 matrix,
-  #   the ith row corresponding to the i/10 quantile.
-  #   The first column is the lower end of the confidence interval.
-  #   The second column is the upper end.
-  #   The third column is the estimated difference between the deciles
-  #   (second group minus first).
-  #
-  # Modified from Rallfun-v31: GAR - University of Glasgow - 2016-06-22
-  # simplified inputs/outputs to make independent figures
-  # changed difference to x-y instead of y-x for consistency across functions
-  # now outputs confidence intervals, similarly to shiftdhd
-  # changed labels to reflect nature of data: 'groups' here, 'conditions' for shiftdhd
-  # now returns a data frame for use with ggplot2
-  x<-x[!is.na(x)]
-  y<-y[!is.na(y)]
-  crit<-80.1/(min(length(x),length(y)))^2+2.73
-  m<-matrix(0,9,5)
-  for (d in 1:9){
-    q<-d/10
-    data<-matrix(sample(x,size=length(x)*nboot,replace=TRUE),nrow=nboot)
-    bvec<-apply(data,1,hd,q)
-    sex<-var(bvec)
-    data<-matrix(sample(y,size=length(y)*nboot,replace=TRUE),nrow=nboot)
-    bvec<-apply(data,1,hd,q)
-    sey<-var(bvec)
-    m[d,1]<-hd(x,q)
-    m[d,2]<-hd(y,q)
-    m[d,3]<-m[d,1]-m[d,2]
-    m[d,4]<-m[d,3]-crit*sqrt(sex+sey)
-    m[d,5]<-m[d,3]+crit*sqrt(sex+sey)
-  }
-  out<-data.frame(m)
-  names(out)<-c('group1','group2','difference','ci_lower','ci_upper')
-  out
-}
-
