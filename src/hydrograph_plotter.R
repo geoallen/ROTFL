@@ -10,6 +10,12 @@
 # specify working directory:
 wd = "/Users/allenstandard/research/2019_08_19_ROTFL/git/ROTFL"
 
+
+insertRow <- function(existingDF, newrow, r) {
+  existingDF[seq(r+1,length(existingDF)+1)] = existingDF[seq(r,length(existingDF))]
+  existingDF[r] = newrow
+  return(existingDF)
+}
 ################################################################################
 # Read in all CSVs
 ################################################################################
@@ -68,14 +74,26 @@ for (h in 1:length(datatype)){
 }
 
 
+# sort tables:
+dateOrd = apply(Master_Date, 2, order)
+for (i in 1:ncol(Master_Date)){
+  Master_Date[,i] = Master_Date[dateOrd[,i], i]
+  Master_Value[,i] = Master_Value[dateOrd[,i], i]
+  Master_Code[,i] = Master_Code[dateOrd[,i], i]
+}
+
+
 ################################################################################
 # Plot hydrographs:
 ################################################################################
-
-pdfOutPath = paste0(outDirPath, "/hydrographs.pdf")
-
-# set up plot:
+# set up single multipage plot:
+pdfOutPath = paste0(outDirPath, "/hydrographs_full.pdf")
 pdf(pdfOutPath, 14, 4)
+
+# set up plot multi single-page plot:
+# pdfOutDir = paste0(outDirPath, "/hydrographs")
+# if (!file.exists(pdfOutDir)){ dir.create(pdfOutDir)}
+# pdfOutPath = paste0(pdfOutDir, "/", sub("X", "", gaugeID), ".pdf")
 
 
 # set up sampling tables:
@@ -87,26 +105,53 @@ Qtab_ar = tabList578[[2]][[2]]
 gaugeID = names(Master_Value)
 
 
+
 # for each gauge:
-for (i in 1:ncol(Master_Value)){
-  #print(i)
+for (i in 1:ncol(Master_Value)){ # 20){ #  
+  # print(i)
+  
   # master tables:
-  Date = as.Date(as.POSIXct(Master_Date[,i], origin="1970-01-01"))
-  Q_cms = Master_Value[,i]*0.028316846592
+  Date_raw = as.Date(as.POSIXct(Master_Date[,i], origin="1970-01-01"))
+  Q_cms_raw = Master_Value[,i]*0.028316846592
+  if (length(which(!is.na(Date_raw))) < 365*5){next}
+  
   # all returns samples:
   Date_ar = as.Date(as.POSIXct(Dtab_ar[,i], origin="1970-01-01"))
   Q_cms_ar = Qtab_ar[,i]*0.028316846592
   # cloud free samples:
   Date_cf = as.Date(as.POSIXct(Dtab_cf[,i], origin="1970-01-01"))
   Q_cms_cf = Qtab_cf[,i]*0.028316846592
-  
-  if (length(which(!is.na(Date))) < 365*5){next}
-  
 
+  # handle irregular NA values:
+  naBoo = is.na(Date_raw) | is.na(Q_cms_raw)
+  Date = Date_raw[!naBoo]
+  Q_cms = Q_cms_raw[!naBoo]
+  jumps = rev(which(diff(Date) > 1))+1
+  if (length(jumps) > 0){
+    for (j in 1:length(jumps)){
+      Date = insertRow(Date, NA, jumps[j])
+      Q_cms = insertRow(Q_cms, NA, jumps[j])
+    }
+  }
+
+  # open pdf device: 
+  # pdf(pdfOutPath[i], 14, 4)
+  
+  # add horizontal lines to plot:
+  layout(matrix(c(1,1), ncol=2, byrow=T),
+         widths = c(1,3))
+  par(mar=c(4,4,1,1))
+  plot(Date, Q_cms, type="n", 
+       ylim=range(Q_cms, na.rm=T), 
+       axes=F, xlab="", ylab="", las=2,
+       main=paste("Site:", sub("X", "", gaugeID[i])))
+  abline(h=axis(2), lwd=0.2, col=rgb(0,0,0,0.7))
+  box()
   
   # plot density distributions on y-axis:
-  layout(matrix(c(1,2), ncol=2, byrow=T),
-         widths = c(1,3))
+  par(new=T)
+  layout(matrix(c(2,1), ncol=2, byrow=T),
+         widths = c(1,2))
   
   par(mar=c(4,4,1,0))
   kern = density(Q_cms, na.rm=T, bw="nrd0")
@@ -119,37 +164,36 @@ for (i in 1:ncol(Master_Value)){
        ylab = "Discharge (cms)",
        axes=T,
        yaxt="n",
-       bty="n")
-  lines(kern_ar$y, kern_ar$x, col="blue")
-  lines(kern_cf$y, kern_cf$x, bty="n", col="red")
+       bty="n", lwd=1.4)
+  lines(kern_ar$y, kern_ar$x, col=4, lwd=1.4)
+  lines(kern_cf$y, kern_cf$x, bty="n", col=2, lwd=1.4)
   
   
+ 
   # plot hydrograph and sampling time:
-  par(mar=c(4,0,1,1))
+  par(new=T)
+  layout(matrix(c(1,2), ncol=2, byrow=T),
+         widths = c(1,3))
+  par(mar=c(4,4,1,1))
   plot(Date, Q_cms, type="l", 
        ylim=range(Q_cms, na.rm=T),
        xlab="Date", ylab="",
        bty="n",
-       yaxt="n",
-       lwd=0.4)
-  points(Date_ar, Q_cms_ar, cex=0.4, col="blue")
-  points(Date_cf, Q_cms_cf, pch=3, cex=0.4, col="red")
-  
-  
-  # add horizontal lines to plot:
-  par(new=T)
-  layout(matrix(c(1,1), ncol=2, byrow=T),
-         widths = c(1,3))
-  par(mar=c(4,4,1,1))
-  plot(Date, Q_cms, type="n", 
-       ylim=range(Q_cms, na.rm=T), 
-       bty="n", axes=F, xlab="", ylab="",
-       main=paste("Site:", sub("X", "", gaugeID[i])))
-  abline(h=axis(2), lwd=0.2)
-  box()
+       axes=F, #yaxt="n",
+       lwd=0.4, col=rgb(0,0,0,0.7))
+  points(Date_ar, Q_cms_ar, cex=0.4, col=rgb(0,0,1,0.7))
+  points(Date_cf, Q_cms_cf, pch=3, cex=0.4, col=rgb(1,0,0,0.7))
+  Jan1 = as.Date(grep("*01-01$", Date_raw, value=T))
+  lab = Jan1[grep("5|0", substr(Jan1, 4, 4))]
+  axis(1, Jan1, labels=F, lwd.ticks=0.5)
+  axis(1, lab, format(lab, "%Y"), line=F)
   
   legend("topright", c("Full gauge record", "All returns", "Clear sky returns"), 
          text.col=c(1, 4, 2), cex=0.8, bg="white")
+  
+  
+  # close pdf device:
+  # dev.off()
   
 }
 
@@ -157,4 +201,152 @@ for (i in 1:ncol(Master_Value)){
 dev.off()
 cmd = paste('open', pdfOutPath)
 system(cmd)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ################################################################################
+# # Plot hydrographs with a subset:
+# ################################################################################
+# 
+# pdfOutPath = paste0(outDirPath, "/hydrographs_1yr.pdf")
+# 
+# # set up plot:
+# pdf(pdfOutPath, 14, 8)
+# 
+# 
+# # set up sampling tables:
+# Dtab_cf = tabList578[[1]][[1]]
+# Qtab_cf = tabList578[[2]][[1]]
+# Dtab_ar = tabList578[[1]][[2]]
+# Qtab_ar = tabList578[[2]][[2]]
+# 
+# gaugeID = names(Master_Value)
+# 
+# 
+# # for each gauge:
+# for (i in 1:20){ #ncol(Master_Value)){
+#   #print(i)
+#   # master tables:
+#   Date = as.Date(as.POSIXct(Master_Date[,i], origin="1970-01-01"))
+#   Q_cms = Master_Value[,i]*0.028316846592
+#   # all returns samples:
+#   Date_ar = as.Date(as.POSIXct(Dtab_ar[,i], origin="1970-01-01"))
+#   Q_cms_ar = Qtab_ar[,i]*0.028316846592
+#   # cloud free samples:
+#   Date_cf = as.Date(as.POSIXct(Dtab_cf[,i], origin="1970-01-01"))
+#   Q_cms_cf = Qtab_cf[,i]*0.028316846592
+#   
+#   if (length(which(!is.na(Date))) < 365*5){next}
+#   
+#   
+#   # add horizontal lines to plot:
+#   layout(matrix(c(1,1,2,2), ncol=2, byrow=T),
+#          widths = c(1,3,2,2))
+#   par(mar=c(4,4,1,1))
+#   plot(Date, Q_cms, type="n", 
+#        ylim=range(Q_cms, na.rm=T), 
+#        bty="n", axes=F, xlab="", ylab="",
+#        main=paste("Site:", sub("X", "", gaugeID[i])))
+#   abline(h=axis(2), lwd=0.2)
+#   box()
+#   
+#   
+#   # plot density distributions on y-axis:
+#   par(new=T)
+#   layout(matrix(c(3,2,1,1), ncol=2, byrow=T),
+#          widths = c(1,3,2,2))
+#   
+#   par(mar=c(4,4,1,0))
+#   kern = density(Q_cms, na.rm=T, bw="nrd0")
+#   kern_ar = density(Q_cms_ar, na.rm=T, bw="nrd0")
+#   kern_cf = density(Q_cms_cf, na.rm=T, bw="nrd0")
+#   plot(kern$y, kern$x, type="l",
+#        ylim = range(Q_cms, na.rm=T),
+#        xlim = range(c(kern$y, kern_ar$y, kern_cf$y)), 
+#        xlab = "Density",
+#        ylab = "Discharge (cms)",
+#        axes=T,
+#        yaxt="n",
+#        bty="n")
+#   lines(kern_ar$y, kern_ar$x, col="blue")
+#   lines(kern_cf$y, kern_cf$x, bty="n", col="red")
+#   
+#   
+#   
+#   # plot hydrograph and sampling time:
+#   par(new=T)
+#   layout(matrix(c(3,4,1,2), ncol=2, byrow=T),
+#          widths = c(1,3,2,2))
+#   par(mar=c(4,0,1,1))
+#   plot(Date, Q_cms, type="l", 
+#        ylim=range(Q_cms, na.rm=T),
+#        xlab="Date", ylab="",
+#        bty="n",
+#        axes=F, #yaxt="n",
+#        lwd=0.4)
+#   points(Date_ar, Q_cms_ar, cex=0.4, col="blue")
+#   points(Date_cf, Q_cms_cf, pch=3, cex=0.4, col="red")
+#   Jan1 = as.Date(grep("*01-01$", Date, value=T))
+#   lab = Jan1[grep("5|0", substr(Jan1, 4, 4))]
+#   axis(1, Jan1, labels=F, lwd.ticks=0.5)
+#   axis(1, lab, format(lab, "%Y"), line=F)
+#   
+#   legend("topright", c("Full gauge record", "All returns", "Clear sky returns"), 
+#          text.col=c(1, 4, 2), cex=0.8, bg="white")
+#   
+#   
+#   # add a subset plot: 
+#   subInd = grep(substr(Date[round(length(which(!is.na(Date)))/2)], 1, 4), Date)
+#   
+#   Date_sub = Date[subInd]
+#   Q_cms_sub = Q_cms[subInd]
+#   Date_ar_sub = Date_ar[which(Date_ar>min(Date_sub) & Date_ar<max(Date_sub))]
+#   Q_cms_ar_sub = Q_cms_ar[which(Date_ar>min(Date_sub) & Date_ar<max(Date_sub))]
+#   Date_cf_sub = Date_cf[which(Date_cf>min(Date_sub) & Date_cf<max(Date_sub))]
+#   Q_cms_cf_sub = Q_cms_cf[which(Date_cf>min(Date_sub) & Date_cf<max(Date_sub))]
+#     
+#   par(new=T)
+#   layout(matrix(c(1,2,3,4,5,5,5,5), ncol=4, byrow=T),
+#          widths = c(1,1,1,1,1,1,1,1))
+#   par(mar=c(4,4,1,1))
+#   plot(Date_sub, Q_cms_sub, type="l", 
+#        ylim=range(Q_cms, na.rm=T),
+#        xlab="Date", ylab="",
+#        xaxt="n",
+#        lwd=0.4)
+#   points(Date_ar_sub, Q_cms_ar_sub, cex=0.8, col="blue")
+#   points(Date_cf_sub, Q_cms_cf_sub, pch=3, cex=0.8, col="red")
+#   fdotm = as.Date(grep("*01$", Date_sub, value=T))
+#   axis(1, fdotm, format(fdotm, "%b %Y"), line=F)
+#   
+#   legend("topright", c("Full gauge record", "All returns", "Clear sky returns"), 
+#          text.col=c(1, 4, 2), cex=0.8, bg="white")
+# }
+# 
+# 
+# dev.off()
+# cmd = paste('open', pdfOutPath)
+# system(cmd)
+
+
+
+
 
