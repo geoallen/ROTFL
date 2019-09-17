@@ -173,27 +173,30 @@ ggplot(d_plot,aes(x=nsat,y=d,color=pcut)) +
 ```
 
 
+## Equivalence testing
+
 ```{r}
-library(lattice)
-library(sp)
+library(equivalence)
+library(Matching)
 
-data(meuse)
-coordinates(meuse) <- ~x+y
-proj4string(meuse) <- CRS("+init=epsg:28992")
+myboots <- function(full,sat){
+  x = full %>%
+    filter(!is.na(q),q > 0) %>%
+    pull(q)
+  y = sat %>%
+    filter(!is.na(q), q > 0) %>%
+    pull(q)
+  
+  out <- Matching::ks.boot(x,y,nboots=500)
+  return(out)
+}
 
-p <- xyplot(copper ~ cadmium, data = meuse@data, col = "grey", pch = 20, cex = 2)
-p <- mget(rep("p", length(meuse)))
-
-clr <- rep("grey", length(meuse))
-p <- lapply(1:length(p), function(i) {
-  clr[i] <- "red"
-  update(p[[i]], col = clr)
-})
+s1 <- nested_gs %>% 
+  slice(1) %>%
+  mutate(eq = map2(data,sat_data,myboots),
+         ks = map2(data,sat_data,myks))
 
 
-mapview(meuse,
-        zcol = "cadmium",
-        popup = popupGraph(p))
 ```
- 
+
  
