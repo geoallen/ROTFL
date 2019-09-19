@@ -25,6 +25,10 @@ library(rogme)
 
 ################################################################
 
+#ls <- read_feather("out/ls_data_long.feather")
+#hist(landsat_all %>% group_by(id) %>% summarise(n = sum(!is.na(q))) %>%pull(n))
+
+
 #Function for making data long. 
 read_stacker <- function(folder){
   files <- list.files(path=path.expand(folder),full.names = T)
@@ -122,7 +126,25 @@ nested_gs <- usgs_full %>%
   dplyr::filter(n > 5 *365) %>%
   nest() %>%
   inner_join(nested_sat,by='id')
+###
+nested_all <- landsat_all %>%
+  group_by(id) %>%
+  mutate(n = sum(!is.na(q))) %>%
+  dplyr::filter(n > 10) %>%
+  nest() %>%
+  rename(sat_data=data)
 
+nested_gs_all <- usgs_full %>%
+  group_by(id) %>%
+  mutate(n = sum(!is.na(q))) %>%
+  # filter to at least 5 years of flow data
+  dplyr::filter(n > 5 *365) %>%
+  nest() %>%
+  inner_join(nested_all,by='id')
+
+
+
+###
 
 myks <- function(full,sat){
   x = full %>%
@@ -154,7 +176,10 @@ myboots <- function(full,sat){
     filter(!is.na(q), q > 0) %>%
     pull(q)
   
-  out <- Matching::ks.boot(x,y,nboots=500)
+  boot <- Matching::ks.boot(x,y,nboots=200)
+  
+  out = tibble(boot.d = boot$ks$statistic, boot_p.value = boot$ks.boot.pvalue  )
+  
   return(out)
 }
 
@@ -213,6 +238,10 @@ RBIcalc <- function(data){##FUNCTION.RBIcalc.START
   #
 }
 
+#test <- matched_sats %>% filter(id == ids[1])
+#test_all <- usgs_full %>% filter(id ==ids[1])
+#test_boot <- myboots(test_all, test)
+
 # aplly ks and wilcox test and RBIU flashiness index
 w_test <- nested_gs %>% 
   #slice(1) %>%
@@ -226,6 +255,37 @@ w_test <- nested_gs %>%
   mutate(ks_p = ifelse(ks_p.value < 0.05, "different", "same"),
          wc_p = ifelse(wc_p.value < 0.05, "different", "same"))
 
+##
+
+w_test_all <- nested_gs_all %>% 
+  #slice(1) %>%
+  mutate(ks = map2(data,sat_data,myks),
+         wc = map2(data,sat_data,mywilcox)) %>%
+  mutate(rbi = map(data, RBIcalc)) %>%
+  unnest(wc) %>%
+  unnest(ks) %>%
+  unnest(rbi) %>%
+  dplyr::select(-data, -sat_data) %>%
+  mutate(ks_p = ifelse(ks_p.value < 0.05, "different", "same"),
+         wc_p = ifelse(wc_p.value < 0.05, "different", "same"))
+
+
+boot_test <- nested_gs %>% 
+  #slice(1) %>%
+  mutate(ks = map2(data,sat_data,myks),
+         wc = map2(data,sat_data,mywilcox),
+         boot = map2(data, sat_data, myboots)) %>%
+  mutate(rbi = map(data, RBIcalc)) %>%
+  unnest(wc) %>%
+  unnest(ks) %>%
+  unnest(boot) %>%
+  unnest(rbi) %>%
+  dplyr::select(-data, -sat_data) %>%
+  mutate(ks_p = ifelse(ks_p.value < 0.05, "different", "same"),
+         wc_p = ifelse(wc_p.value < 0.05, "different", "same"),
+         boot_p = ifelse(boot_p.value < 0.05, "different", "same"))
+
+
 ##############################################
 
 
@@ -233,7 +293,7 @@ w_test <- nested_gs %>%
 # change the index numbers to pan around other sites
 full_sats %>%
   #dplyr::filter(id %in% unique(id)[1:20]) %>%
- dplyr::filter(id=="06656000") %>%
+ dplyr::filter(id=="01199000") %>%
   ggplot() +
   geom_density(aes(q_pop), color="black") +
   geom_density(aes(q_sample), color="red") +
@@ -295,7 +355,7 @@ join_sum_site <- join_sum %>%
 # a bunch of sites get lost here, because they are missing in csv and/or when downloading NWIS site
 w_test_join <- w_test %>%
   left_join(join_sum_site, by="id") %>%
-  dplyr::filter(!is.na(dec_long_va)) %>%
+  #dplyr::filter(!is.na(dec_long_va)) %>%
   st_as_sf(coords = c("dec_long_va", "dec_lat_va"), crs= 4326) 
 
 
@@ -303,6 +363,13 @@ w_test_join <- w_test %>%
 #mapview(join_sum_site, zcol='percentile_range_sample', legend=T )
 
 mapview(w_test_join, zcol='ks_p', legend=T )
+
+
+w_test_all_join <- w_test_all %>%
+  left_join(sites, by="id") %>%
+  st_as_sf(coords = c("dec_long_va", "dec_lat_va"), crs= 4326) 
+
+mapview(w_test_all_join, zcol='d',  legend=T )
 
 #####################################################
 
@@ -314,7 +381,7 @@ mapview(w_test_join, zcol='ks_p', legend=T )
 # different?  NOPE
 ggplot(w_test_join) +
   #geom_density(aes(rbi, color=wc_p)) +
- geom_point(aes(x=rbi, y=wc_p.value, color=wc_p)) +
+ geom_point(aes(x=d, y=ks_p.value, color=ks_p)) +
   theme_few() 
 
 # with drainage area ? NOPE
@@ -323,14 +390,38 @@ ggplot(w_test_join) +
   geom_point(aes(x=drain_area_va, y=d, color=ks_p)) +
   theme_few() +
   scale_x_log10()
-#
 
+#
+ggplot(w_test_join) +
+  geom_density(aes(drain_area_va, color=ks_p)) +
+  #geom_point(aes(x=drain_area_va, y=d, color=ks_p)) +
+  theme_few() +
+  scale_x_log10()
+
+ggplot(w_test_join) +
+  geom_density(aes(sdq, color=ks_p)) +
+  #geom_point(aes(x=drain_area_va, y=d, color=ks_p)) +
+  theme_few() +
+  scale_x_log10()
+
+
+#
 ggplot(w_test_join) +
   #geom_density(aes(rbi, color=ks_p)) +
   geom_point(aes(x=drain_area_va, y=d, color=ks_p.value)) +
   theme_few() +
   scale_x_log10()
 #
+
+ggplot(w_test_join) +
+  geom_point(aes(x=n_pop, y =nsat, color=ks_p), size=2) +
+  theme_few() +
+  xlab("# of days in population Q at gage") +
+  ylab("# of cloud free Landsat Q samples")
+
+ggsave(paste('figs/', "sample_size.jpeg", sep=""), units='in', width = 4, height=4,
+       dpi=350)
+
 
 # look at pvlaues from wilcox and ks
 ggplot(w_test) +
@@ -345,6 +436,17 @@ ggplot(w_test) +
 
 ggsave(paste('figs/', "WC_KS_p.jpeg", sep=""), units='in', width = 4, height=4,
        dpi=350)
+
+#
+ggplot(w_test_join) +
+  geom_point(aes(x=percentile_range_sample, y=d, color=nsat)) +
+  theme_few() +
+ # scale_x_log10() +
+  scale_y_log10()  
+
+  xlab("Wilcox p-value") +
+  ylab("KS p-value")
+
 
 
 # >90% of gages capture 97% perecntiles of flow
