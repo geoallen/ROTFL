@@ -12,187 +12,277 @@ library(equivalence)
 library(ggthemes)
 library(stats)
 library(MASS)
+library(broom)
+library(mapview)
+library(tidyr)
+library(dataRetrieval)
+library(htmlwidgets)
+library(ggthemes)
+library(leafpop)
+library(leaflet)
 #devtools::install_github("GRousselet/rogme")
 library(rogme)
 
+################################################################
 
-### load data
-wd <- "D:/GoogleDrive/ROTFL"
-
-inDirPath = paste0(wd, '/in/cleaned')
-if (!file.exists(inDirPath)){dir.create(inDirPath)}
-CSVpaths_all = list.files(inDirPath, ".csv", recursive=T, full.names=T)
-
-# write out PDFs in "out" directory:
-outDirPath = paste0(wd, "/out")
-if (!file.exists(outDirPath)){dir.create(outDirPath)}
-
-# hard-coded names of CSV tables:
-mission = c("Landsat_5", "Landsat_7", "Landsat_8")
-master = c("Master")
-datatype = c("Date", "Value", "Code")
-dataset = c("CloudsRemoved", "AllReturns")
-
-grepTerms = c(as.vector(outer(outer(mission, datatype, paste, sep=".*"), 
-                              dataset, paste, sep=".*")), 
-              paste(master, datatype, sep=".*"))
-tabNames = gsub("[.]", "_", gsub("[*]", "", grepTerms))
-
-pathNamesList = lapply(grepTerms, grep, CSVpaths_all, value=T)
-
-# read in csvs and assign them to variables based on file names:
-for (i in 1:length(tabNames)){
-  print(paste("Reading in", pathNamesList[[i]][1]))
-  assign(tabNames[i], read.csv(pathNamesList[[i]][1], header=T))
+#Function for making data long. 
+read_stacker <- function(folder){
+  files <- list.files(path=path.expand(folder),full.names = T)
+  ## Dropping for now
+  #codes <- files[grepl('Codes_',files)]
+  dates <- files[grepl('Dates',files)]
+  q <- files[grepl('Values',files)]
+  
+  #make it long
+  date_data <- read_csv(dates) %>%
+    gather(key=id,value=date)
+  q_data <- read_csv(q) %>%
+    gather(key=id,value=q) %>%
+    mutate(date=as.POSIXct(date_data$date,origin='1970-01-01')) %>%
+    # changes substr for my filepath
+    mutate(sat = substr(folder,33,41)) %>%
+    separate(id,into=c("x", "id"), sep="X", remove=T, convert=T ) %>%
+    mutate(id = as.character(id)) %>%
+    dplyr::select(-x) 
+    #mutate(id = gsub('X','0',id))  #%>%
+ #   mutate(id=ifelse(substr(id,1,1) != 0 & nchar(id) < 8,paste0('0',id),id))
+  return(q_data)
 }
 
-site_info <- read_csv(paste(wd, "/SiteAttributes.csv", sep="")) %>%
-  mutate(site = as.character(site_no)) %>%
-  dplyr::select(-site_no)
+#Folders where data lives
+folders <- c('D:/GoogleDrive/ROTFL/in/cleaned/Landsat_8/CloudsRemoved','D:/GoogleDrive/ROTFL/in/cleaned/Landsat_7/CloudsRemoved',
+             'D:/GoogleDrive/ROTFL/in/cleaned/Landsat_5/CloudsRemoved')
+
+folders_all <- c('D:/GoogleDrive/ROTFL/in/cleaned/Landsat_8/AllReturns','D:/GoogleDrive/ROTFL/in/cleaned/Landsat_7/AllReturns',
+             'D:/GoogleDrive/ROTFL/in/cleaned/Landsat_5/AllReturns')
+
+#Stack all landsats and remove unknown IDS. 
+landsat_cloud_free <- map_dfr(folders,read_stacker) %>%
+  filter(id != '01135') %>%
+  filter(!is.na(date)) %>%
+  filter(!is.na(q), q> 0) %>%
+  mutate(id = str_pad(id, 8, pad="0", side="left"))
+
+landsat_all <- map_dfr(folders_all,read_stacker) %>%
+  filter(id != '01135') %>%
+  filter(!is.na(date)) %>%
+  filter(!is.na(q), q> 0) %>%
+  mutate(id = str_pad(id, 8, pad="0", side="left"))
+
+#Stack the usgs full dataset
+usgs_full <- read_stacker(folder='D:/GoogleDrive/ROTFL/in/cleaned/Master_Tables')  %>%
+  dplyr::select(-sat) %>%
+  mutate(id = str_pad(id, 8, pad="0", side="left"))
+
+#Make a separate dataset where landsat only counts if it is at the same 
+#time q was taken
+matched_sats <-  landsat_cloud_free %>%
+  inner_join(usgs_full %>% dplyr::select(id,date),by=c('id','date'))
+
+#Make long dataset of full usgs distribution with joined "landsat samples"
+full_sats <- usgs_full %>% 
+  rename(q_pop=q) %>%
+  left_join(landsat_cloud_free %>% rename(q_sample=q), by=c('id','date'))
+
+# Get the unique usgs ids
+ids <- unique(usgs_full$id)
+
+#Download site lat long and other info
+sites <- readNWISsite(ids) %>% as_tibble() %>%
+  rename(id=site_no)
+
+#sites <- read_csv('D:/GoogleDrive/ROTFL/in/gauge_attributes/SiteAttributes.csv') %>%
+#  rename(id=site_no) %>%
+#  mutate(id = str_pad(id, 8, pad="0", side="left"),
+#          id =as.character(id))
+
+#Convert to spatial object
+site_sf <- st_as_sf(sites,coords=c('dec_long_va','dec_lat_va'),crs=4326)
+#Save as .RData file
+save(landsat_cloud_free, landsat_all, matched_sats,usgs_full,site_sf,file='D:/GoogleDrive/ROTFL/out/rotfl_clean.RData')
+
+#####################################################
+
+#load('out/rotfl_clean.RData')
+
+# make nested data sets for mapping stats
+# had to set filters to still remove sites with too little data
+# that was messing up stats
+nested_sat <- matched_sats %>%
+  group_by(id) %>%
+  mutate(n = sum(!is.na(q))) %>%
+  dplyr::filter(n > 10) %>%
+  nest() %>%
+  rename(sat_data=data)
+
+nested_gs <- usgs_full %>%
+  group_by(id) %>%
+  mutate(n = sum(!is.na(q))) %>%
+  # filter to at least 5 years of flow data
+  dplyr::filter(n > 5 *365) %>%
+  nest() %>%
+  inner_join(nested_sat,by='id')
 
 
-### function to convert wide to long, and if bind =T, join site data
-wide2long <- function(date, value, code, site, bind=F) {
-
-date_long <- date %>%
-  gather(key = "site", value = "date") 
+myks <- function(full,sat){
+  x = full %>%
+    filter(!is.na(q),q > 0) %>%
+    pull(q) %>%
+    jitter()
   
-value_long <- value %>%
-  gather(key = "site", value = "flow") %>%
-  dplyr::select(-site)
-
-code_long <- code %>%
-  gather(key="site", value = "code") %>%
-  dplyr::select(-site)
-
-if(bind ==T) {
-out <- cbind(date_long, value_long) %>%
-  cbind(code_long) %>%
-  arrange(site, date) %>%
-  mutate(date = anydate(date)) %>%
-  separate(site,into=c("x", "site"), sep="X", remove=T, convert=T ) %>%
-  mutate(site = as.character(site)) %>%
-  dplyr::select(-x) %>%
-  left_join(site, b="site")
-
-} else{
-  out <- cbind(date_long, value_long) %>%
-    cbind(code_long) %>%
-    arrange(site, date) %>%
-    mutate(date = anydate(date)) %>%
-    separate(site,into=c("x", "site"), sep="X", remove=T, convert=T ) %>%
-    mutate(site = as.character(site)) %>%
-    dplyr::select(-x, -code)
-  }
-
-#rm(date, value, code)
-return(out)
+  y = sat %>%
+    filter(!is.na(q), q > 0) %>%
+    pull(q) %>%
+    jitter()
+  
+  tk <- ks.test(x,y)
+  out = tibble(d=tk$statistic,ks_p.value=tk$p.value,nsat=length(y),sdq=sd((x)),
+               mq=mean((x)), mq_sat=mean((y)), sdq_sat=sd((y)))
+  return(out)
 }
 
-# make master data long
-ms_data <- wide2long(date=Master_Date, value=Master_Value, code=Master_Code,
-                     site=site_info, bind=T)
 
-# make landsat5 long for clouds removed data
-ls5 <- wide2long(date=Landsat_5_Date_CloudsRemoved, value=Landsat_5_Value_CloudsRemoved, 
-                      code=Landsat_5_Code_CloudsRemoved, bind=F) %>%
-  drop_na() %>%
-  mutate(sat = "ls_5") %>%
-  rename(flow_sample = flow)
+## Equivalence testing
+library(equivalence)
+library(Matching)
+
+myboots <- function(full,sat){
+  x = full %>%
+    filter(!is.na(q),q > 0) %>%
+    pull(q)
+  y = sat %>%
+    filter(!is.na(q), q > 0) %>%
+    pull(q)
   
-# make landsat7 long
-ls7 <- wide2long(date=Landsat_7_Date_CloudsRemoved, value=Landsat_7_Value_CloudsRemoved, 
-                      code=Landsat_7_Code_CloudsRemoved, bind=F) %>%
-  drop_na()  %>%
-  mutate(sat = "ls_7") %>%
-  rename(flow_sample = flow)
+  out <- Matching::ks.boot(x,y,nboots=500)
+  return(out)
+}
 
-# make landsat8 long
-ls8 <- wide2long(date=Landsat_8_Date_CloudsRemoved, value=Landsat_8_Value_CloudsRemoved, 
-                      code=Landsat_8_Code_CloudsRemoved, bind=F) %>%
-  drop_na() %>%
-  mutate(sat = "ls_8") %>%
-  rename(flow_sample = flow)
+mywilcox <- function(full,sat){
+  x = full %>%
+    dplyr::filter(!is.na(q),q > 0) %>%
+    pull(q) %>%
+    jitter()
+  
+  y = sat %>%
+    dplyr::filter(!is.na(q), q > 0) %>%
+    pull(q) %>%
+    jitter()
+  
+  tk <- wilcox.test(x,y, paired = F, correct=T)
+  
+  out = tibble(w=tk$statistic, wc_p.value=tk$p.value)
+  
+  return(out)
+}
 
-# row bind landsat missions
-# there are ~ 34000 duplicates where 5,7 ot 7,8 get sample from same site/date
-# I am guessing this is edge of scenes? Lets drop those duplicatesd
-# so we can do the stats for all landsat data combined. It doesn't matter which
-# mission sampled if its the same site/date, but IF want to do analysis per 
-# mission join the data individual and do NOT drop duplicates
-ls_all <- bind_rows(ls5, ls7, ls8) %>%
-  distinct(site, date, flow_sample, .keep_all = T)
+RBIcalc <- function(data){##FUNCTION.RBIcalc.START
+  #
+  time.start <- proc.time();
 
-# dups <- ls_all %>%
-#   drop_na() %>%
-#   group_by(site, date,flow_sample) %>%
-#   mutate(n = n()) %>%
-#   filter(n >1) %>%
-#   arrange(site, date, flow_sample)
+  Q <- data %>% 
+    pull(q) 
+  
+  Q[Q==0] <- NA
+ # Q <- data %>%
+ #   dplyr::filter(!is.na(q),q > 0) %>%
+ #  pull(q) 
+  
+  # Size
+  myLen <- length(Q)
+  # Add previous record in second column
+  Qprev <- c(NA,Q[-myLen])
+  # Create dataframe.
+  myData <- as.data.frame(cbind(Q,Qprev))
+  # delta (absolute)
+  myData[,"AbsDelta"] <- abs(myData[,"Q"] - myData[,"Qprev"])
+  # SumQ
+  SumQ <- sum(myData[,"Q"],na.rm=TRUE)
+  # Sum Delta
+  SumDelta <- sum(myData[,"AbsDelta"], na.rm=TRUE)
+  #
+  RBIsum <- SumDelta / SumQ
+  #
+  time.elaps <- proc.time()-time.start
+  # cat(c("Rarify of samples complete. \n Number of samples = ",nsamp,"\n"))
+  # cat(c(" Execution time (sec) = ", elaps[1]))
+  # flush.console()
+  #
+  # Return RBI value 
+  return(RBIsum)
+  #
+}
 
-# write data
-#write_feather(ms_data, "out/master_data_long.feather")
+# aplly ks and wilcox test and RBIU flashiness index
+w_test <- nested_gs %>% 
+  #slice(1) %>%
+  mutate(ks = map2(data,sat_data,myks),
+         wc = map2(data,sat_data,mywilcox)) %>%
+  mutate(rbi = map(data, RBIcalc)) %>%
+  unnest(wc) %>%
+  unnest(ks) %>%
+  unnest(rbi) %>%
+  dplyr::select(-data, -sat_data) %>%
+  mutate(ks_p = ifelse(ks_p.value < 0.05, "different", "same"),
+         wc_p = ifelse(wc_p.value < 0.05, "different", "same"))
 
-#write_feather(ls_all, "out/ls_data_long.feather")
-
-######################################################
-ms_data <- read_feather("out/master_data_long.feather")
-
-ls_all <- read_feather("out/ls_data_long.feather")
+##############################################
 
 
-### join landsat "sampled" flow to master "population" flow
-ms_join <- ms_data %>%
-  rename(flow_pop = flow) %>%
-  left_join(ls_all, by=c("site", "date")) 
-
-
-#write_feather(ms_join, "out/ms_ls_clean.feather")
-# But we can use this to take quick looks at the distributions of Q for a few sites.
+#take quick looks at the distributions of Q for a few sites.
 # change the index numbers to pan around other sites
-ms_join %>%
-  dplyr::filter(site %in% unique(site)[170:190]) %>%
- # dplyr::filter(site=="7139000") %>%
+full_sats %>%
+  #dplyr::filter(id %in% unique(id)[1:20]) %>%
+ dplyr::filter(id=="06656000") %>%
   ggplot() +
-  geom_density(aes(flow_pop), color="black") +
-  geom_density(aes(flow_sample), color="red") +
+  geom_density(aes(q_pop), color="black") +
+  geom_density(aes(q_sample), color="red") +
 #  scale_x_log10() +
   scale_x_log10() +
   theme_few() +
-  facet_wrap(~site, scales="free")
+  facet_wrap(~id, scales="free")
+
+# look at time series
+full_sats %>%
+  #dplyr::filter(id %in% unique(id)[1:4]) %>%
+   dplyr::filter(id=="06656000") %>%
+  ggplot() +
+  geom_line(aes(x=date, y=q_pop)) +
+  theme_few() +
+  facet_wrap(~id, scales="free")
+
 
 # make look up table of population flow percentiles by site to later join
 # to find what population percentiles corresponed with min/max sample Q
-percentiles_pop <- ms_join %>%
-  dplyr::select(site, flow_pop) %>%
-  arrange(site, flow_pop) %>%
-  group_by(site) %>%
-  mutate(prob_pop = 1-cume_dist(flow_pop)) %>%
-  distinct(site, flow_pop, prob_pop, .keep_all = T)
+percentiles_pop <- full_sats %>%
+  dplyr::select(id, q_pop) %>%
+  arrange(id, q_pop) %>%
+  group_by(id) %>%
+  mutate(prob_pop = 1-cume_dist(q_pop)) %>%
+  distinct(id, q_pop, prob_pop, .keep_all = T)
   
 
 # Distributions look good. I think we can extract mode, max, min per gage.
 # find mode, min, max for population and sample per site
-join_sum <- ms_join %>%
-  dplyr::select(site, flow_sample, flow_pop) %>%
-  arrange(site, flow_pop) %>%
-  group_by(site) %>%
+join_sum <- full_sats %>%
+  dplyr::select(id, q_sample, q_pop) %>%
+  arrange(id, q_pop) %>%
+  group_by(id) %>%
   # remove sites that have no landsat samples, or no gage flow data
-  mutate(na_sample = sum(is.na(flow_sample)),
-         na_pop = sum(is.na(flow_pop)),
-         n = n(),
-         ndays_pop = sum(!is.na(flow_pop))) %>%
-  filter(n > na_sample & n > na_pop) %>%
+  mutate(n_sample = sum(!is.na(q_sample)),
+         n_pop = sum(!is.na(q_pop))) %>%
+  dplyr::filter(n_sample > 10,
+                n_pop > (5*365)) %>%
   ungroup() %>%
   # calculate modal, max, min Q for sample and population
-  group_by(site, ndays_pop) %>%
-  summarise_at(vars(flow_sample, flow_pop), funs(mode=modeest::mlv, min=min, max=max), na.rm=T) %>%
-  mutate(mode_ratio = flow_sample_mode / flow_pop_mode) %>%
+  group_by(id, n_pop) %>%
+  summarise_at(vars(q_sample, q_pop), funs(mode=modeest::mlv, min=min, max=max, med=median), na.rm=T) %>%
+  mutate(mode_ratio = q_sample_mode / q_pop_mode) %>%
   ungroup() %>%
   # join in what "poplution" flow percentile corresponds to sample max/min 
-  inner_join(., percentiles_pop, by=c("site", "flow_sample_max"="flow_pop")) %>%
+  inner_join(., percentiles_pop, by=c("id", "q_sample_max"="q_pop")) %>%
   rename(prob_sample_max = prob_pop ) %>% 
-  inner_join(., percentiles_pop, by=c("site", "flow_sample_min"="flow_pop")) %>%
+  inner_join(., percentiles_pop, by=c("id", "q_sample_min"="q_pop")) %>%
   rename(prob_sample_min = prob_pop) %>% 
   mutate(percentile_range_sample = (prob_sample_min - prob_sample_max) *100)
   
@@ -200,87 +290,62 @@ join_sum <- ms_join %>%
 # these rivers have more of an exponential or some other EVD
 
 join_sum_site <- join_sum %>%
-  left_join(site_info, by = "site") %>%
-  st_as_sf(coords = c("dec_long_va", "dec_lat_va"), crs= 4326) %>%
-  # filter to gages that have > 5 years of Q data
-  filter(ndays_pop > 5*365)
-  
+  inner_join(sites, by = "id") 
+
+# a bunch of sites get lost here, because they are missing in csv and/or when downloading NWIS site
+w_test_join <- w_test %>%
+  left_join(join_sum_site, by="id") %>%
+  dplyr::filter(!is.na(dec_long_va)) %>%
+  st_as_sf(coords = c("dec_long_va", "dec_lat_va"), crs= 4326) 
+
+
 # make some maps of how well landsat captures modal and range of Q per gage 
-mapview(join_sum_site, zcol='percentile_range_sample', legend=T )
-mapview(join_sum_site, zcol='mode_ratio', legend=T )
+#mapview(join_sum_site, zcol='percentile_range_sample', legend=T )
 
-#############################################################
-#### Test out different statistics for assessind difference in distribution
+mapview(w_test_join, zcol='ks_p', legend=T )
 
-## pick to example sites
-# site that has the same distribution
-good <- ms_join %>% filter(site == "6038800")
-
-# site that should have different distribution
-bad <- ms_join %>% filter(site == "14312000")
-#3314500, #3287000, 1351500, 14312000, 
-
-good_long <- good %>%
-  dplyr::select(flow_pop, flow_sample) %>%
-  gather( key = "group", value = "flow") %>%
-  drop_na() %>%
-  mutate(group = as.factor(group)) %>%
-  as_tibble()
-
-bad_long <- bad %>%
-  dplyr::select(flow_pop, flow_sample) %>%
-  gather( key = "group", value = "flow") %>%
-  drop_na() %>%
-  mutate(group = as.factor(group)) %>%
-  as_tibble()
-
-
-ggplot(good_long)+
-  geom_histogram(aes(flow, fill = group)) +
-  scale_x_log10() +
-  scale_y_log10() 
-
-ggplot(bad_long)+
-  geom_histogram(aes(flow, fill = group)) +
-  scale_x_log10() +
-  scale_y_log10() 
-
-
-
-## ks test
-# says distributions are not different p > 0.05, D = 0.03
-ks.test(good$flow_pop, good$flow_sample)
-
-# says distributions are different p < 0.05, D = .26
-ks.test(bad$flow_pop, bad$flow_sample)
-
-
-## equivalence test , this test says both good/bad are the same distribution
-tost(log(good$flow_pop), log(good$flow_sample), paired = F, var.equal = F, conf.level = 0.95)
-
-tost(log(bad$flow_pop), log(bad$flow_sample), paired = F, var.equal = F, conf.level = 0.95)
-
-
-## try shift test that looks for difference between any quantile.
-## this test takes about 3 minutes
-shift_good <- rogme::shifthd_pbci(data=good_long, flow ~ group, q=c(0.25, 0.5, 0.75)) 
-
-shift_bad <- rogme::shifthd_pbci(data=bad_long, flow ~ group, q=c(0.25, 0.5, 0.75)) 
-
-# all qunatiles have P > 0.05 and distributions are the same
-shift_good
-# all qunatiles have P < 0.05 and disttributions are different
-shift_bad
-
-rogme::plot_sf(shift_good, plot_theme = 2)[[1]] 
-
-rogme::plot_sf(shift_bad, plot_theme = 2)[[1]] 
-
-                      
+#####################################################
 
 
 #####################################################
 ### other plots 
+
+# is there a difference in flashiness based on if pop and sample distributions are 
+# different?  NOPE
+ggplot(w_test_join) +
+  #geom_density(aes(rbi, color=wc_p)) +
+ geom_point(aes(x=rbi, y=wc_p.value, color=wc_p)) +
+  theme_few() 
+
+# with drainage area ? NOPE
+ggplot(w_test_join) +
+  #geom_density(aes(rbi, color=ks_p)) +
+  geom_point(aes(x=drain_area_va, y=d, color=ks_p)) +
+  theme_few() +
+  scale_x_log10()
+#
+
+ggplot(w_test_join) +
+  #geom_density(aes(rbi, color=ks_p)) +
+  geom_point(aes(x=drain_area_va, y=d, color=ks_p.value)) +
+  theme_few() +
+  scale_x_log10()
+#
+
+# look at pvlaues from wilcox and ks
+ggplot(w_test) +
+  geom_point(aes(x=wc_p.value, y=ks_p.value, color=nsat)) +
+  theme_few() +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_hline(aes(yintercept = 0.05)) +
+  geom_vline(aes(xintercept = 0.05)) +
+  xlab("Wilcox p-value") +
+  ylab("KS p-value")
+
+ggsave(paste('figs/', "WC_KS_p.jpeg", sep=""), units='in', width = 4, height=4,
+       dpi=350)
+
 
 # >90% of gages capture 97% perecntiles of flow
 ggplot(join_sum_site) +
@@ -305,7 +370,7 @@ ggplot(join_sum) +
 #ggsave(paste('figs/', "modalQ_hist.jpeg", sep=""), units='in', width = 6, height=4)
 
 ggplot(join_sum_site) +
-  geom_point(aes(flow_pop_mode, flow_sample_mode)) +
+  geom_point(aes(q_pop_mode, q_sample_mode)) +
   scale_y_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
                 labels = scales::trans_format("log10", scales::math_format(10^.x))) +
   scale_x_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
@@ -319,7 +384,7 @@ ggplot(join_sum_site) +
 
 # does the length of the Q record (population) impact how well? Not really
 ggplot(join_sum_site) +
-  geom_point(aes(ndays_pop, mode_ratio)) +
+  geom_point(aes(n_pop, mode_ratio)) +
   scale_x_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
                 labels = scales::trans_format("log10", scales::math_format(10^.x))) +
   scale_y_log10() +
@@ -344,10 +409,267 @@ ggplot(join_sum_site) +
 #ggsave(paste('figs/', "modalQ_drainage_area.jpeg", sep=""), units='in', width = 5, height=5)
 
 
-# ms_join %>%
-#   # dplyr::filter(site %in% unique(site)[1:20]) %>%
-#   dplyr::filter(site=="7139000") %>%
-#   ggplot(aes(date, flow_pop)) +
-#   geom_line() +
-#   scale_y_log10()
-#  
+###################################################
+
+##################################################
+### matts plottin
+
+myplotter <- function(full,sat){
+  x = full %>%
+    filter(!is.na(q),q > 0) %>%
+    pull(q)
+  y = sat %>%
+    filter(!is.na(q), q > 0) %>%
+    pull(q)
+  xt = tibble(q=x,data='usgs')
+  yt = tibble(q=y,data='sat')
+  gp <- rbind(xt,yt) %>%
+    ggplot(.,aes(x=q,color=data)) +
+    geom_density(size=1) + 
+    scale_color_manual(values=c('red3','black'),name='') + 
+    scale_x_log10() + 
+    theme_few() + 
+    theme(legend.position = c(0.8,0.8)) + 
+    ggtitle(paste('Cloud Free # =',length(y),sep=' '))
+  return((gp))
+}
+
+
+nested_gs_mods <- nested_gs %>%
+  mutate(ks = map2(data,sat_data,myks)) %>%
+  mutate(gp = map2(data,sat_data,myplotter)) %>%
+  unnest(ks) %>%
+  mutate(d=round(d,4))
+
+
+spatial <- site_sf %>%
+  inner_join(nested_gs_mods,by='id')
+
+qpal <- colorNumeric("Reds", spatial$d, n = 7)
+
+
+## Map (takes a long time, don't run)
+big_map <- leaflet() %>%
+  addProviderTiles(providers$CartoDB.DarkMatter) %>%
+  addCircleMarkers(data=spatial,group='sat',color=~qpal(spatial$d)) %>%
+  addLegend('bottomright',pal=qpal,values=spatial$d,
+            title='D Value') %>%
+  addPopupGraphs(spatial$gp,group='sat',width=250,height=250) 
+
+mapshot(big_map,url='map.html')
+
+
+d_plot <- nested_gs_mods %>%
+  mutate(pcut = cut(p.value,breaks=c(0,0.001,0.01,0.05,0.1,1))) %>%
+  filter(!is.na(pcut))
+
+ggplot(d_plot,aes(x=nsat,y=d,color=pcut)) + 
+  geom_point() + 
+  theme_few() + 
+  xlab('# of satellite images') + 
+  ylab('D Value') + 
+  theme(legend.position=c(0.7,0.7)) + 
+  scale_x_log10()
+
+
+
+#########################################################
+### old munge
+
+### load data
+# wd <- "D:/GoogleDrive/ROTFL"
+# 
+# inDirPath = paste0(wd, '/in/cleaned')
+# if (!file.exists(inDirPath)){dir.create(inDirPath)}
+# CSVpaths_all = list.files(inDirPath, ".csv", recursive=T, full.names=T)
+# 
+# # write out PDFs in "out" directory:
+# outDirPath = paste0(wd, "/out")
+# if (!file.exists(outDirPath)){dir.create(outDirPath)}
+# 
+# # hard-coded names of CSV tables:
+# mission = c("Landsat_5", "Landsat_7", "Landsat_8")
+# master = c("Master")
+# datatype = c("Date", "Value", "Code")
+# dataset = c("CloudsRemoved", "AllReturns")
+# 
+# grepTerms = c(as.vector(outer(outer(mission, datatype, paste, sep=".*"), 
+#                               dataset, paste, sep=".*")), 
+#               paste(master, datatype, sep=".*"))
+# tabNames = gsub("[.]", "_", gsub("[*]", "", grepTerms))
+# 
+# pathNamesList = lapply(grepTerms, grep, CSVpaths_all, value=T)
+# 
+# # read in csvs and assign them to variables based on file names:
+# for (i in 1:length(tabNames)){
+#   print(paste("Reading in", pathNamesList[[i]][1]))
+#   assign(tabNames[i], read.csv(pathNamesList[[i]][1], header=T))
+# }
+# 
+# site_info <- read_csv(paste(wd, "/SiteAttributes.csv", sep="")) %>%
+#   mutate(site = as.character(site_no)) %>%
+#   dplyr::select(-site_no)
+# 
+# 
+# ### function to convert wide to long, and if bind =T, join site data
+# wide2long <- function(date, value, code, site, bind=F) {
+#   
+#   date_long <- date %>%
+#     gather(key = "site", value = "date") 
+#   
+#   value_long <- value %>%
+#     gather(key = "site", value = "flow") %>%
+#     dplyr::select(-site)
+#   
+#   code_long <- code %>%
+#     gather(key="site", value = "code") %>%
+#     dplyr::select(-site)
+#   
+#   if(bind ==T) {
+#     out <- cbind(date_long, value_long) %>%
+#       cbind(code_long) %>%
+#       arrange(site, date) %>%
+#       mutate(date = anydate(date)) %>%
+#       separate(site,into=c("x", "site"), sep="X", remove=T, convert=T ) %>%
+#       mutate(site = as.character(site)) %>%
+#       dplyr::select(-x) %>%
+#       left_join(site, b="site")
+#     
+#   } else{
+#     out <- cbind(date_long, value_long) %>%
+#       cbind(code_long) %>%
+#       arrange(site, date) %>%
+#       mutate(date = anydate(date)) %>%
+#       separate(site,into=c("x", "site"), sep="X", remove=T, convert=T ) %>%
+#       mutate(site = as.character(site)) %>%
+#       dplyr::select(-x, -code)
+#   }
+#   
+#   #rm(date, value, code)
+#   return(out)
+# }
+# 
+# # make master data long
+# ms_data <- wide2long(date=Master_Date, value=Master_Value, code=Master_Code,
+#                      site=site_info, bind=T)
+# 
+# # make landsat5 long for clouds removed data
+# ls5 <- wide2long(date=Landsat_5_Date_CloudsRemoved, value=Landsat_5_Value_CloudsRemoved, 
+#                  code=Landsat_5_Code_CloudsRemoved, bind=F) %>%
+#   drop_na() %>%
+#   mutate(sat = "ls_5") %>%
+#   rename(flow_sample = flow)
+# 
+# # make landsat7 long
+# ls7 <- wide2long(date=Landsat_7_Date_CloudsRemoved, value=Landsat_7_Value_CloudsRemoved, 
+#                  code=Landsat_7_Code_CloudsRemoved, bind=F) %>%
+#   drop_na()  %>%
+#   mutate(sat = "ls_7") %>%
+#   rename(flow_sample = flow)
+# 
+# # make landsat8 long
+# ls8 <- wide2long(date=Landsat_8_Date_CloudsRemoved, value=Landsat_8_Value_CloudsRemoved, 
+#                  code=Landsat_8_Code_CloudsRemoved, bind=F) %>%
+#   drop_na() %>%
+#   mutate(sat = "ls_8") %>%
+#   rename(flow_sample = flow)
+# 
+# # row bind landsat missions
+# # there are ~ 34000 duplicates where 5,7 ot 7,8 get sample from same site/date
+# # I am guessing this is edge of scenes? Lets drop those duplicatesd
+# # so we can do the stats for all landsat data combined. It doesn't matter which
+# # mission sampled if its the same site/date, but IF want to do analysis per 
+# # mission join the data individual and do NOT drop duplicates
+# ls_all <- bind_rows(ls5, ls7, ls8) %>%
+#   distinct(site, date, flow_sample, .keep_all = T)
+# 
+# # dups <- ls_all %>%
+# #   drop_na() %>%
+# #   group_by(site, date,flow_sample) %>%
+# #   mutate(n = n()) %>%
+# #   filter(n >1) %>%
+# #   arrange(site, date, flow_sample)
+# 
+# # write data
+# #write_feather(ms_data, "out/master_data_long.feather")
+# 
+# #write_feather(ls_all, "out/ls_data_long.feather")
+# 
+# ######################################################
+# ms_data <- read_feather("out/master_data_long.feather")
+# 
+# ls_all <- read_feather("out/ls_data_long.feather")
+# 
+# 
+# ### join landsat "sampled" flow to master "population" flow
+# ms_join <- ms_data %>%
+#   rename(flow_pop = flow) %>%
+#   left_join(ls_all, by=c("site", "date")) 
+
+#############################################################
+#### Test out different statistics for assessind difference in distribution
+
+## pick to example sites
+# site that has the same distribution
+# good <- ms_join %>% filter(site == "6038800")
+# 
+# # site that should have different distribution
+# bad <- ms_join %>% filter(site == "14312000")
+# #3314500, #3287000, 1351500, 14312000, 
+# 
+# good_long <- good %>%
+#   dplyr::select(flow_pop, flow_sample) %>%
+#   gather( key = "group", value = "flow") %>%
+#   drop_na() %>%
+#   mutate(group = as.factor(group)) %>%
+#   as_tibble()
+# 
+# bad_long <- bad %>%
+#   dplyr::select(flow_pop, flow_sample) %>%
+#   gather( key = "group", value = "flow") %>%
+#   drop_na() %>%
+#   mutate(group = as.factor(group)) %>%
+#   as_tibble()
+# 
+# 
+# ggplot(good_long)+
+#   geom_histogram(aes(flow, fill = group)) +
+#   scale_x_log10() +
+#   scale_y_log10() 
+# 
+# ggplot(bad_long)+
+#   geom_histogram(aes(flow, fill = group)) +
+#   scale_x_log10() +
+#   scale_y_log10() 
+# 
+# 
+# 
+# ## ks test
+# # says distributions are not different p > 0.05, D = 0.03
+# ks.test(good$flow_pop, good$flow_sample)
+# 
+# # says distributions are different p < 0.05, D = .26
+# ks.test(bad$flow_pop, bad$flow_sample)
+# 
+# 
+# ## equivalence test , this test says both good/bad are the same distribution
+# tost(log(good$flow_pop), log(good$flow_sample), paired = F, var.equal = F, conf.level = 0.95)
+# 
+# tost(log(bad$flow_pop), log(bad$flow_sample), paired = F, var.equal = F, conf.level = 0.95)
+# 
+# 
+# ## try shift test that looks for difference between any quantile.
+# ## this test takes about 3 minutes
+# shift_good <- rogme::shifthd_pbci(data=good_long, flow ~ group, q=c(0.25, 0.5, 0.75)) 
+# 
+# shift_bad <- rogme::shifthd_pbci(data=bad_long, flow ~ group, q=c(0.25, 0.5, 0.75)) 
+# 
+# # all qunatiles have P > 0.05 and distributions are the same
+# shift_good
+# # all qunatiles have P < 0.05 and disttributions are different
+# shift_bad
+# 
+# rogme::plot_sf(shift_good, plot_theme = 2)[[1]] 
+# 
+# rogme::plot_sf(shift_bad, plot_theme = 2)[[1]] 
+
