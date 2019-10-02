@@ -22,7 +22,11 @@ library(leafpop)
 library(leaflet)
 #devtools::install_github("GRousselet/rogme")
 library(rogme)
-
+## Equivalence testing
+library(equivalence)
+library(Matching)
+library(twosamples)
+ 
 ################################################################
 
 #ls <- read_feather("out/ls_data_long.feather")
@@ -103,49 +107,59 @@ sites <- readNWISsite(ids) %>% as_tibble() %>%
 #Convert to spatial object
 site_sf <- st_as_sf(sites,coords=c('dec_long_va','dec_lat_va'),crs=4326)
 #Save as .RData file
-save(landsat_cloud_free, landsat_all, matched_sats,usgs_full,site_sf,file='D:/GoogleDrive/ROTFL/out/rotfl_clean.RData')
+save(landsat_cloud_free, landsat_all, matched_sats, usgs_full, site_sf,file='D:/GoogleDrive/ROTFL/out/rotfl_clean.RData')
 
 #####################################################
 
 #load('out/rotfl_clean.RData')
 
+# 103 sites with all NA in discharge data. lets remove these
+bad_sites <- usgs_full %>% 
+  group_by(id) %>%
+  mutate(n = sum(!is.na(q))) %>%
+  filter(n ==0) %>%
+  distinct(id, .keep_all = T)
+
 # make nested data sets for mapping stats
 # had to set filters to still remove sites with too little data
 # that was messing up stats
+
+# Cloud free landsat overpasses
 nested_sat <- matched_sats %>%
   group_by(id) %>%
   mutate(n = sum(!is.na(q))) %>%
+  # filter to sites that have > 10 Q samples over landsat record
+  # cannot effectively compare distributions will small sample size
   dplyr::filter(n > 10) %>%
+  dplyr::filter(!id %in% unique(bad_sites$id)) %>%
   nest() %>%
   rename(sat_data=data)
 
 nested_gs <- usgs_full %>%
   group_by(id) %>%
-  mutate(n = sum(!is.na(q))) %>%
-  # filter to at least 5 years of flow data
-  dplyr::filter(n > 5 *365) %>%
+  #mutate(n = sum(!is.na(q))) %>%
+  dplyr::filter(id %in% unique(nested_sat$id)) %>%
   nest() %>%
   inner_join(nested_sat,by='id')
-###
+
+# All landsat overpasses
 nested_all <- landsat_all %>%
   group_by(id) %>%
-  mutate(n = sum(!is.na(q))) %>%
-  dplyr::filter(n > 10) %>%
+ # mutate(n = sum(!is.na(q))) %>%
+  #dplyr::filter(n > 10) %>%
+  dplyr::filter(id %in% unique(nested_sat$id)) %>%
   nest() %>%
   rename(sat_data=data)
 
 nested_gs_all <- usgs_full %>%
   group_by(id) %>%
-  mutate(n = sum(!is.na(q))) %>%
-  # filter to at least 5 years of flow data
-  dplyr::filter(n > 5 *365) %>%
+ # mutate(n = sum(!is.na(q))) %>%
+  dplyr::filter(id %in% unique(nested_all$id)) %>%
   nest() %>%
   inner_join(nested_all,by='id')
 
 
-
-###
-
+### functions for mapping
 myks <- function(full,sat){
   x = full %>%
     filter(!is.na(q),q > 0) %>%
@@ -158,15 +172,11 @@ myks <- function(full,sat){
     jitter()
   
   tk <- ks.test(x,y)
-  out = tibble(d=tk$statistic,ks_p.value=tk$p.value,nsat=length(y),sdq=sd((x)),
+  out = tibble(d=tk$statistic,ks_p.value=tk$p.value,nsat=length(y), npop=length(x),sdq=sd((x)),
                mq=mean((x)), mq_sat=mean((y)), sdq_sat=sd((y)))
   return(out)
 }
 
-
-## Equivalence testing
-library(equivalence)
-library(Matching)
 
 myboots <- function(full,sat){
   x = full %>%
@@ -202,17 +212,13 @@ mywilcox <- function(full,sat){
 }
 
 RBIcalc <- function(data){##FUNCTION.RBIcalc.START
-  #
+
   time.start <- proc.time();
 
   Q <- data %>% 
     pull(q) 
   
   Q[Q==0] <- NA
- # Q <- data %>%
- #   dplyr::filter(!is.na(q),q > 0) %>%
- #  pull(q) 
-  
   # Size
   myLen <- length(Q)
   # Add previous record in second column
@@ -225,69 +231,101 @@ RBIcalc <- function(data){##FUNCTION.RBIcalc.START
   SumQ <- sum(myData[,"Q"],na.rm=TRUE)
   # Sum Delta
   SumDelta <- sum(myData[,"AbsDelta"], na.rm=TRUE)
-  #
+  
   RBIsum <- SumDelta / SumQ
-  #
+  
   time.elaps <- proc.time()-time.start
-  # cat(c("Rarify of samples complete. \n Number of samples = ",nsamp,"\n"))
-  # cat(c(" Execution time (sec) = ", elaps[1]))
-  # flush.console()
-  #
   # Return RBI value 
   return(RBIsum)
-  #
 }
 
-#test <- matched_sats %>% filter(id == ids[1])
-#test_all <- usgs_full %>% filter(id ==ids[1])
-#test_boot <- myboots(test_all, test)
+mycvm <- function(full, sat) {
+  require(twosamples)
+  
+  x = full %>%
+  filter(!is.na(q),q > 0) %>%
+  pull(q) %>%
+  jitter()
 
-# aplly ks and wilcox test and RBIU flashiness index
+y = sat %>%
+  filter(!is.na(q), q > 0) %>%
+  pull(q) %>%
+  jitter()
+
+cvm <- cvm_test(x,y, nboot=50)
+out = tibble(stat = cvm[1], cvm_p.value=cvm[2])
+return(out)
+}
+
+
+ID_test <-  "01010000"  # 01013500
+# test site for same 01010000
+full_sats %>%
+  #dplyr::filter(id %in% unique(id)[1:20]) %>%
+  dplyr::filter(id==ID_test) %>%
+  ggplot() +
+  geom_density(aes(q_pop), color="black") +
+  geom_density(aes(q_sample), color="red") +
+  #  scale_x_log10() +
+  scale_x_log10() +
+  theme_few() 
+ # facet_wrap(~id, scales="free")
+
+
+test <- matched_sats %>% filter(id == ID_test, !is.na(q))
+test_all <- usgs_full %>% filter(id == ID_test, !is.na(q))
+#test_boot <- myboots(test_all, test)
+cvm <- cvm_test(test$q %>% jitter, test_all$q %>% jitter(), nboot=50)
+ks.test(test$q %>% jitter(), test_all$q %>% jitter())
+mycvm(test_all, test)
+
+
+
+# Cloud free overpasses: do all stats test
 w_test <- nested_gs %>% 
-  #slice(1) %>%
+  slice(1:100) %>%
   mutate(ks = map2(data,sat_data,myks),
-         wc = map2(data,sat_data,mywilcox)) %>%
+         #wc = map2(data,sat_data,mywilcox),
+         cvm = map2(data, sat_data, mycvm)) %>%
   mutate(rbi = map(data, RBIcalc)) %>%
-  unnest(wc) %>%
+ # unnest(wc) %>%
   unnest(ks) %>%
   unnest(rbi) %>%
+  unnest(cvm) %>%
   dplyr::select(-data, -sat_data) %>%
   mutate(ks_p = ifelse(ks_p.value < 0.05, "different", "same"),
-         wc_p = ifelse(wc_p.value < 0.05, "different", "same"))
+         #wc_p = ifelse(wc_p.value < 0.05, "different", "same"),
+         cvm_p = ifelse(cvm_p.value < 0.05, "different", "same"))
 
-##
 
+# All landsat passes
 w_test_all <- nested_gs_all %>% 
   #slice(1) %>%
   mutate(ks = map2(data,sat_data,myks),
-         wc = map2(data,sat_data,mywilcox)) %>%
+         cvm = map2(data, sat_data, mycvm)) %>%
+         #wc = map2(data,sat_data,mywilcox)) %>%
   mutate(rbi = map(data, RBIcalc)) %>%
-  unnest(wc) %>%
   unnest(ks) %>%
   unnest(rbi) %>%
-  dplyr::select(-data, -sat_data) %>%
-  mutate(ks_p = ifelse(ks_p.value < 0.05, "different", "same"),
-         wc_p = ifelse(wc_p.value < 0.05, "different", "same"))
-
-
-boot_test <- nested_gs %>% 
-  #slice(1) %>%
-  mutate(ks = map2(data,sat_data,myks),
-         wc = map2(data,sat_data,mywilcox),
-         boot = map2(data, sat_data, myboots)) %>%
-  mutate(rbi = map(data, RBIcalc)) %>%
-  unnest(wc) %>%
-  unnest(ks) %>%
-  unnest(boot) %>%
-  unnest(rbi) %>%
+  unnest(cvm) %>%
   dplyr::select(-data, -sat_data) %>%
   mutate(ks_p = ifelse(ks_p.value < 0.05, "different", "same"),
          wc_p = ifelse(wc_p.value < 0.05, "different", "same"),
-         boot_p = ifelse(boot_p.value < 0.05, "different", "same"))
+         cvm_p = ifelse(cvm_p.value < 0.05, "different", "same"))
+
+# bootstrapped ks test on cloud free overpasses
+boot_test <- nested_gs %>% 
+  #slice(1) %>%
+  mutate( boot = map2(data, sat_data, myboots)) %>%
+  unnest(boot) %>%
+  dplyr::select(-data, -sat_data) %>%
+  mutate(boot_p = ifelse(boot_p.value < 0.05, "different", "same"))
 
 
 ##############################################
+# try fitting a distribution and doing one way ks-test?
 
+###################################################
 
 #take quick looks at the distributions of Q for a few sites.
 # change the index numbers to pan around other sites
@@ -326,14 +364,9 @@ percentiles_pop <- full_sats %>%
 # find mode, min, max for population and sample per site
 join_sum <- full_sats %>%
   dplyr::select(id, q_sample, q_pop) %>%
-  arrange(id, q_pop) %>%
-  group_by(id) %>%
+  #arrange(id, q_pop) %>%
   # remove sites that have no landsat samples, or no gage flow data
-  mutate(n_sample = sum(!is.na(q_sample)),
-         n_pop = sum(!is.na(q_pop))) %>%
-  dplyr::filter(n_sample > 10,
-                n_pop > (5*365)) %>%
-  ungroup() %>%
+  dplyr::filter(id %in% unique(nested_sat$id)) %>%
   # calculate modal, max, min Q for sample and population
   group_by(id, n_pop) %>%
   summarise_at(vars(q_sample, q_pop), funs(mode=modeest::mlv, min=min, max=max, med=median), na.rm=T) %>%
