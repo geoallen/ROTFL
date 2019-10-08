@@ -158,6 +158,29 @@ nested_gs_all <- usgs_full %>%
   nest() %>%
   inner_join(nested_all,by='id')
 
+## make map of fraction of days cloud free at sites
+cloud <- landsat_all %>%
+  dplyr::filter(id %in% unique(nested_sat$id)) %>%
+  filter(!is.na(q)) %>%
+  group_by(id) %>%
+  summarise(count_all = n()) %>%
+  left_join(landsat_cloud_free %>%
+              dplyr::filter(id %in% unique(nested_sat$id)) %>%
+              filter(!is.na(q)) %>%
+              group_by(id) %>%
+              summarise(count_cloudfree = n()),
+            by="id"  ) %>%
+  mutate(cloud_free_frac = count_cloudfree/count_all)
+  
+cloud_join <- cloud %>%
+  left_join(sites, by="id") %>%
+  st_as_sf(coords=c('dec_long_va','dec_lat_va'),crs=4326)
+
+map_cloud<- mapview(cloud_join, zcol='cloud_free_frac', legend=T)
+
+mapshot(map_cloud,  file="figs/cloud_map.png", url ="figs/cloud_map.html"  )
+
+
 
 ### functions for mapping
 myks <- function(full,sat){
@@ -257,33 +280,33 @@ out = tibble(stat = cvm[1], cvm_p.value=cvm[2])
 return(out)
 }
 
-
-ID_test <-  "01010000"  # 01013500
-# test site for same 01010000
-full_sats %>%
-  #dplyr::filter(id %in% unique(id)[1:20]) %>%
-  dplyr::filter(id==ID_test) %>%
-  ggplot() +
-  geom_density(aes(q_pop), color="black") +
-  geom_density(aes(q_sample), color="red") +
-  #  scale_x_log10() +
-  scale_x_log10() +
-  theme_few() 
- # facet_wrap(~id, scales="free")
-
-
-test <- matched_sats %>% filter(id == ID_test, !is.na(q))
-test_all <- usgs_full %>% filter(id == ID_test, !is.na(q))
-#test_boot <- myboots(test_all, test)
-cvm <- cvm_test(test$q %>% jitter, test_all$q %>% jitter(), nboot=50)
-ks.test(test$q %>% jitter(), test_all$q %>% jitter())
-mycvm(test_all, test)
+## TEST out stats on ONE site
+# ID_test <-  "01010000"  # 01013500
+# # test site for same 01010000
+# full_sats %>%
+#   #dplyr::filter(id %in% unique(id)[1:20]) %>%
+#   dplyr::filter(id==ID_test) %>%
+#   ggplot() +
+#   geom_density(aes(q_pop), color="black") +
+#   geom_density(aes(q_sample), color="red") +
+#   #  scale_x_log10() +
+#   scale_x_log10() +
+#   theme_few() 
+#  # facet_wrap(~id, scales="free")
+#
+# 
+# test <- matched_sats %>% filter(id == ID_test, !is.na(q))
+# test_all <- usgs_full %>% filter(id == ID_test, !is.na(q))
+# #test_boot <- myboots(test_all, test)
+# cvm <- cvm_test(test$q %>% jitter, test_all$q %>% jitter(), nboot=50)
+# ks.test(test$q %>% jitter(), test_all$q %>% jitter())
+# mycvm(test_all, test)
 
 
 
 # Cloud free overpasses: do all stats test
 w_test <- nested_gs %>% 
-  slice(1:100) %>%
+  #slice(1:100) %>%
   mutate(ks = map2(data,sat_data,myks),
          #wc = map2(data,sat_data,mywilcox),
          cvm = map2(data, sat_data, mycvm)) %>%
@@ -321,33 +344,29 @@ boot_test <- nested_gs %>%
   dplyr::select(-data, -sat_data) %>%
   mutate(boot_p = ifelse(boot_p.value < 0.05, "different", "same"))
 
-
-##############################################
-# try fitting a distribution and doing one way ks-test?
-
 ###################################################
 
 #take quick looks at the distributions of Q for a few sites.
 # change the index numbers to pan around other sites
-full_sats %>%
-  #dplyr::filter(id %in% unique(id)[1:20]) %>%
- dplyr::filter(id=="01199000") %>%
-  ggplot() +
-  geom_density(aes(q_pop), color="black") +
-  geom_density(aes(q_sample), color="red") +
-#  scale_x_log10() +
-  scale_x_log10() +
-  theme_few() +
-  facet_wrap(~id, scales="free")
-
-# look at time series
-full_sats %>%
-  #dplyr::filter(id %in% unique(id)[1:4]) %>%
-   dplyr::filter(id=="06656000") %>%
-  ggplot() +
-  geom_line(aes(x=date, y=q_pop)) +
-  theme_few() +
-  facet_wrap(~id, scales="free")
+# full_sats %>%
+#   #dplyr::filter(id %in% unique(id)[1:20]) %>%
+#  dplyr::filter(id=="01199000") %>%
+#   ggplot() +
+#   geom_density(aes(q_pop), color="black") +
+#   geom_density(aes(q_sample), color="red") +
+# #  scale_x_log10() +
+#   scale_x_log10() +
+#   theme_few() +
+#   facet_wrap(~id, scales="free")
+# 
+# # look at time series
+# full_sats %>%
+#   #dplyr::filter(id %in% unique(id)[1:4]) %>%
+#    dplyr::filter(id=="06656000") %>%
+#   ggplot() +
+#   geom_line(aes(x=date, y=q_pop)) +
+#   theme_few() +
+#   facet_wrap(~id, scales="free")
 
 
 # make look up table of population flow percentiles by site to later join
@@ -405,9 +424,6 @@ w_test_all_join <- w_test_all %>%
 mapview(w_test_all_join, zcol='d',  legend=T )
 
 #####################################################
-
-
-#####################################################
 ### other plots 
 
 # is there a difference in flashiness based on if pop and sample distributions are 
@@ -446,19 +462,31 @@ ggplot(w_test_join) +
   scale_x_log10()
 #
 
-ggplot(w_test_join) +
-  geom_point(aes(x=n_pop, y =nsat, color=ks_p), size=2) +
+ggplot(w_test) +
+  geom_point(aes(x=npop, y =nsat, color=ks_p), size=2) +
   theme_few() +
   xlab("# of days in population Q at gage") +
   ylab("# of cloud free Landsat Q samples")
 
-ggsave(paste('figs/', "sample_size.jpeg", sep=""), units='in', width = 4, height=4,
+#ggsave(paste('figs/', "sample_size.jpeg", sep=""), units='in', width = 4, height=4,
+#       dpi=350)
+
+#
+ggplot(w_test) +
+  #geom_density(aes(rbi, color=ks_p)) +
+  geom_point(aes(x=d, y=stat, color=cvm_p)) +
+  theme_few() +
+  xlab("D statistic (ks)") +
+  ylab("CVM test statistic")
+  #scale_x_log10()
+ggsave(paste('figs/', "ks_cvm_stats.jpeg", sep=""), units='in', width = 4, height=4,
        dpi=350)
 
+#
 
 # look at pvlaues from wilcox and ks
 ggplot(w_test) +
-  geom_point(aes(x=wc_p.value, y=ks_p.value, color=nsat)) +
+  geom_point(aes(x=cvm_p.value, y=ks_p.value, color=nsat)) +
   theme_few() +
   scale_x_log10() +
   scale_y_log10() +
@@ -547,7 +575,7 @@ ggplot(join_sum_site) +
 ###################################################
 
 ##################################################
-### matts plottin
+### matt's plotting
 
 myplotter <- function(full,sat){
   x = full %>%
