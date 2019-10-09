@@ -11,7 +11,7 @@
 # runs wilcox (Mann-Whitney) non-parametric test to determine if sample is  
 # statistically different than population. 
 
-install.packages("zyp")
+# install.packages("zyp")
 library(zyp)
 
 # specify working directory:
@@ -52,7 +52,7 @@ for (i in 1:length(tabNames)){
 ################################################################################
 # Calculate discharge quantiles for Master table
 ################################################################################
-probs = seq(0, 1, 0.1)
+probs = c(0, 0.01, 0.05, 0.1, 0.5, 0.9, 0.95, 0.99, 1)
 
 Master_Value_qTab = as.data.frame(array(NA, c(length(probs), ncol(Master_Value))))
 for (i in 1:length(probs)){
@@ -110,13 +110,13 @@ qTabList = c(qTabListIndiv, qTabList578)
 pdfOutPath = paste0(outDirPath, "/quantile_plots.pdf")
 
 # set up plot:
-pdf(pdfOutPath, 14, 12)
+pdf(pdfOutPath, 10, 10)
 par(mar=c(4,4,1,1))
-layout(matrix(c(1,1,1,1,
-              2,3,4,5,
-              6,7,8,9,
-              10,11,12,13), nrow=4, byrow=T),
-       heights = c(1,4,4,4,4))
+layout(matrix(c(1,1,1,
+              2,3,4,
+              5,6,7,
+              8,9,10), nrow=4, byrow=T),
+       heights = c(1,4,4,4))
 
 # remove zero (no flow) or negative (reverse flow) values from master qTab:
 Master_Value_qTab[Master_Value_qTab<=0] = NA
@@ -126,7 +126,8 @@ xRange = range(Master_Value_qTab, na.rm=T)
 plotInd = which(lapply(qTabList, length) > 1)
 for (i in 1:length(plotInd)){
   sTab = qTabList[[plotInd[i]]]
-  # remove zero (no flow) or negative (reverse flow) values from qTab:
+  # remove zero (no flow) or negative (reverse flow) values from qTab.
+  # this is necessary since we are plotting log-log:
   sTab[sTab<=0] = NA
   
   m2s_match = match(names(Master_Value_qTab), names(sTab))
@@ -212,8 +213,6 @@ for (i in 1:length(plotInd)){
     if (ks[[2]][[1]] < 0.05 ){ box(col=2, lwd=2) }
     
   }
-  
-  plot.new()
   
 }
 

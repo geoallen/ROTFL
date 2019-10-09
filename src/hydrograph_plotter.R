@@ -8,8 +8,9 @@
 # reads in all data tables and plots sample hydrographs with samples dates:
 
 
-#install.packages("Matching")
+#install.packages("TOSTER")
 library(Matching)
+#library(TOSTER)
 
 # specify working directory:
 wd = "/Users/allenstandard/research/2019_08_19_ROTFL/git/ROTFL"
@@ -112,13 +113,13 @@ for (i in 1:ncol(Master_Date)){
 # Plot hydrographs:
 ################################################################################
 # set up single multipage plot:
-# pdfOutPath = paste0(outDirPath, "/hydrographs_full.pdf")
-# pdf(pdfOutPath, 10, 3.5)
+pdfOutPath = paste0(outDirPath, "/hydrographs_full.pdf")
+pdf(pdfOutPath, 10, 3.5)
 
 # alternitively, set up a plot multi single-page plot:
-pdfOutDir = paste0(outDirPath, "/hydrographs")
-if (!file.exists(pdfOutDir)){ dir.create(pdfOutDir)}
-pdfOutPath = paste0(pdfOutDir, "/", sub("X", "", gaugeID), ".pdf")
+# pdfOutDir = paste0(outDirPath, "/hydrographs")
+# if (!file.exists(pdfOutDir)){ dir.create(pdfOutDir)}
+# pdfOutPath = paste0(pdfOutDir, "/", sub("X", "", gaugeID), ".pdf")
 
 
 # set up sampling tables:
@@ -126,13 +127,16 @@ Dtab_cf = tabList578[[1]][[1]]
 Qtab_cf = tabList578[[2]][[1]]
 Dtab_ar = tabList578[[1]][[2]]
 Qtab_ar = tabList578[[2]][[2]]
-
 gaugeID = names(Master_Value)
 
+# set up statistics table:
+statTabNames = c("gaugeID", "N_ci", "wilcox_W_ci", "wilcox_p_ci", "ks_D_ci", "ks_p_ci", 
+                 "N_cf", "wilcox_W_cf", "wilcox_p_cf", "ks_D_cf", "ks_p_cf")
+statTab = as.data.frame(array(NA, c(length(gaugeID), length(statTabNames))))
+names(statTab) = statTabNames
 
-
-# for each gauge:
-for (i in 1:ncol(Master_Value)){ # round(seq(1, ncol(Master_Value), length.out=25))){ #  
+##### for each gauge:
+for (i in 1:ncol(Master_Value)){ # round(seq(1, ncol(Master_Value), length.out=500))){ #  c(553,1098)){   # 
   # print(i)
   
   # cleaned master tables:
@@ -179,7 +183,7 @@ for (i in 1:ncol(Master_Value)){ # round(seq(1, ncol(Master_Value), length.out=2
  
   
   # open pdf device: 
-  pdf(pdfOutPath[i], 14, 4)
+  # pdf(pdfOutPath[i], 14, 4)
   
   
   # add horizontal lines to plot:
@@ -200,38 +204,35 @@ for (i in 1:ncol(Master_Value)){ # round(seq(1, ncol(Master_Value), length.out=2
   layout(matrix(c(1,2), ncol=2, byrow=T),
          widths = c(2,1))
   
-  # par(mar=c(4,4,1,1))
-  # kern = density(Q_cms, na.rm=T, bw="nrd0")
-  # kern_ar = density(Q_cms_ar, na.rm=T, bw="nrd0")
-  # kern_cf = density(Q_cms_cf, na.rm=T, bw="nrd0")
-  # plot(kern$y, kern$x, type="l",
-  #      ylim = range(Q_cms, na.rm=T),
-  #      xlim = range(c(kern$y, kern_ar$y, kern_cf$y)), 
-  #      xlab = "Density",
-  #      ylab = "",
-  #      axes=T,
-  #      yaxt="n",
-  #      bty="n", lwd=1.4)
-  # lines(kern_ar$y, kern_ar$x, col=4, lwd=1.4)
-  # lines(kern_cf$y, kern_cf$x, bty="n", col=2, lwd=1.4)
-  
-  
   par(mar=c(4,4,1,1))
-  # kern = density(Q_cms, na.rm=T, bw="nrd0")
-  # kern_ar = density(Q_cms_ar, na.rm=T, bw="nrd0")
-  # kern_cf = density(Q_cms_cf, na.rm=T, bw="nrd0")
-  Q_cms_ePDF = ePDF(Q_cms, Q_cms)
-  Q_cms_ar_ePDF = ePDF(Q_cms_ar, Q_cms)
-  Q_cms_cf_ePDF = ePDF(Q_cms_cf, Q_cms)
-  
-  plot(Q_cms_ePDF$y, Q_cms_ePDF$x, type="l", 
-       xlab = "Cumulative Density",
+  kern = density(Q_cms, na.rm=T, bw="nrd0")
+  kern_ar = density(Q_cms_ar, na.rm=T, bw="nrd0")
+  kern_cf = density(Q_cms_cf, na.rm=T, bw="nrd0")
+  plot(kern$y, kern$x, type="l",
+       ylim = range(Q_cms, na.rm=T),
+       xlim = range(c(kern$y, kern_ar$y, kern_cf$y)),
+       xlab = "Density",
        ylab = "",
        axes=T,
        yaxt="n",
        bty="n", lwd=1.4)
-  lines(Q_cms_ar_ePDF$y, Q_cms_ar_ePDF$x, col=4, lwd=1.4)
-  lines(Q_cms_cf_ePDF$y, Q_cms_cf_ePDF$x, col=2, lwd=1.4)
+  lines(kern_ar$y, kern_ar$x, col=4, lwd=1.4)
+  lines(kern_cf$y, kern_cf$x, bty="n", col=2, lwd=1.4)
+  
+  # # plot CDFs:
+  # par(mar=c(4,4,1,1))
+  # Q_cms_ePDF = ePDF(Q_cms, Q_cms)
+  # Q_cms_ar_ePDF = ePDF(Q_cms_ar, Q_cms)
+  # Q_cms_cf_ePDF = ePDF(Q_cms_cf, Q_cms)
+  # 
+  # plot(Q_cms_ePDF$y, Q_cms_ePDF$x, type="l", 
+  #      xlab = "Cumulative Density",
+  #      ylab = "",
+  #      axes=T,
+  #      yaxt="n",
+  #      bty="n", lwd=1.4)
+  # lines(Q_cms_ar_ePDF$y, Q_cms_ar_ePDF$x, col=4, lwd=1.4)
+  # lines(Q_cms_cf_ePDF$y, Q_cms_cf_ePDF$x, col=2, lwd=1.4)
   
   # plot cleaned hydrograph and sampling time:
   par(new=T)
@@ -251,26 +252,53 @@ for (i in 1:ncol(Master_Value)){ # round(seq(1, ncol(Master_Value), length.out=2
   axis(1, Jan1, labels=F, lwd.ticks=0.5)
   axis(1, lab, format(lab, "%Y"), line=F)
   
-  # add statistics:
-  # ks_ar = Matching::ks.boot(Q_cms, Q_cms_ar, nboots=500)
-  # ks_ar_D = round(ks_ar$ks$statistic[[1]], 2)
-  # if (ks_ar$ks$p.value < 1e-3){ ks_ar_p =  "< 0.001" }else{ ks_ar_p = paste("=", round(ks_ar$ks$p.value, 3)) }
-  # Matching::ks.boot(Q_cms, Q_cms_cf, nboots=500)
-  # ks_cf_D = round(ks_cf$ks$statistic[[1]], 2)
-  # if (ks_cf$ks$p.value < 1e-3){ ks_cf_p =  "< 0.001" }else{ ks_cf_p = paste("=", round(ks_cf$ks$p.value, 3)) }
+  # add rigorous statistics:
+  ks_ar = Matching::ks.boot(Q_cms, Q_cms_ar, nboots=500)$ks
+  ks_cf = Matching::ks.boot(Q_cms, Q_cms_cf, nboots=500)$ks
   
-  ks_ar = suppressWarnings(ks.test(Q_cms, Q_cms_ar)) 
-  ks_ar_D = round(ks_ar$statistic[[1]], 2)
-  if (ks_ar$p.value < 1e-3){ ks_ar_p =  "< 0.001" }else{ ks_ar_p = paste("=", round(ks_ar$p.value, 3)) }
-  ks_cf = suppressWarnings(ks.test(Q_cms, Q_cms_cf)) 
-  ks_cf_D = round(ks_cf$statistic[[1]], 2)
-  if (ks_cf$p.value < 1e-3){ ks_cf_p =  "< 0.001" }else{ ks_cf_p = paste("=", round(ks_cf$p.value, 3)) }
+  # add fast k-s statistics:
+  # ks_ar = suppressWarnings(ks.test(Q_cms, Q_cms_ar))
+  #ks_ar_D = round(ks_ar$statistic[[1]], 2)
+  #if (ks_ar$p.value < 1e-3){ ks_ar_p =  "< 0.001" }else{ ks_ar_p = paste("=", round(ks_ar$p.value, 3)) }
+  # ks_cf = suppressWarnings(ks.test(Q_cms, Q_cms_cf))
+  #ks_cf_D = round(ks_cf$statistic[[1]], 2)
+  #if (ks_cf$p.value < 1e-3){ ks_cf_p =  "< 0.001" }else{ ks_cf_p = paste("=", round(ks_cf$p.value, 3)) }
+  # 
+  # 
+  # legend("topleft", c("Gauge record", 
+  #                     paste0("All returns: k-s D = ", ks_ar_D, ",  p-val ", ks_ar_p),
+  #                     paste0("Clear-sky returns: k-s D = ", ks_cf_D, ";  p-val ", ks_cf_p)),
+  #        text.col=c(1, 4, 2), cex=0.8, bg="white")
   
   
-  legend("topleft", c("Gauge record", 
-                      paste0("All returns: k-s D = ", ks_ar_D, ",  p-val ", ks_ar_p),
-                      paste0("Clear-sky returns: k-s D = ", ks_cf_D, ";  p-val ", ks_cf_p)),
-         text.col=c(1, 4, 2), cex=0.8, bg="white")
+  # Wilcoxon test:
+  w_ar = wilcox.test(Q_cms_ar, Q_cms, paired=F)
+  #if (w_ar$p.value < 1e-3){ w_ar_p =  "< 0.001" }else{ w_ar_p = paste("=", round(w_ar$p.value, 3)) }
+  w_cf = wilcox.test(Q_cms_cf, Q_cms, paired=F)
+  #if (w_cf$p.value < 1e-3){ w_cf_p =  "< 0.001" }else{ w_cf_p = paste("=", round(w_cf$p.value, 3)) }
+  
+  # legend("topleft", c("Gauge record", 
+  #                     paste0("Cloud-independent: Wilcoxon p-val ", w_ar_p),
+  #                     paste0("Clear-sky: Wilcoxon p-val ", w_cf_p)),
+  #        text.col=c(1, 4, 2), cex=0.8, bg="white")
+  
+  statTab[i,] = c(
+    gaugeID[i],
+    length(which(!is.na(Q_cms_ar))),
+    w_ar$statistic,
+    w_ar$p.value, 
+    ks_ar$statistic,
+    ks_ar$p.value,
+    length(which(!is.na(Q_cms_cf))),
+    w_cf$statistic,
+    w_cf$p.value, 
+    ks_cf$statistic,
+    ks_cf$p.value
+  )
+  
+  
+  
+  
   
   # # plot full (raw) hydrograph:
   # par(new=T)
@@ -302,14 +330,38 @@ for (i in 1:ncol(Master_Value)){ # round(seq(1, ncol(Master_Value), length.out=2
   
   
   # close pdf device:
-  dev.off()
+  # dev.off()
+  # system(paste('open', pdfOutPath[i]))
   
 }
 
 
-# dev.off()
-# cmd = paste('open', pdfOutPath)
-# system(cmd)
+dev.off()
+cmd = paste('open', pdfOutPath)
+system(cmd)
+
+o = order(as.numeric(statTab$N_ci), decreasing=T)
+plot(statTab$ks_D_ci[o], statTab$ks_p_ci[o], 
+       col=rainbow(nrow(statTab), v=0.9, alpha=0.7, start=0, end=0.2),
+       xlab="k-s D", ylab="k-s p",
+       cex=0.7)
+o = order(as.numeric(statTab$N_cf), decreasing = T)
+points(statTab$ks_D_cf[o], statTab$ks_p_cf[o],
+     xlab="k-s D", ylab="k-s p",
+     col=rainbow(nrow(statTab), alpha=0.4, start=0.6, end=0.8), 
+     pch=3, cex=0.5)
+
+lVal = as.numeric(statTab$N_ci)
+legend("topright", legend = c(min(lVal,na.rm=T), median(lVal,na.rm=T), max(lVal,na.rm=T)), 
+       fill = rainbow(3, v=0.9, alpha=0.7, start=0, end=0.2), title = "cloud indepedent")
+
+lVal = as.numeric(statTab$N_cf)
+legend("bottomright", legend = c(min(lVal,na.rm=T), median(lVal,na.rm=T), max(lVal,na.rm=T)), 
+       fill = rainbow(3, alpha=0.4, start=0.6, end=0.8), title = "cloud free")
+
+length(which(statTab$ks_p_ci < 0.05))/nrow(statTab)
+             
+median(as.numeric(statTab$ks_D_ci[statTab$ks_p_ci < 0.05]), na.rm=T)
 
 
 
@@ -322,18 +374,10 @@ for (i in 1:ncol(Master_Value)){ # round(seq(1, ncol(Master_Value), length.out=2
 
 
 
+################################################################################
+# Plot hydrographs with a subset:
+################################################################################
 
-
-
-
-
-
-
-
-# ################################################################################
-# # Plot hydrographs with a subset:
-# ################################################################################
-# 
 # pdfOutPath = paste0(outDirPath, "/hydrographs_1yr.pdf")
 # 
 # # set up plot:
@@ -361,34 +405,34 @@ for (i in 1:ncol(Master_Value)){ # round(seq(1, ncol(Master_Value), length.out=2
 #   # cloud free samples:
 #   Date_cf = as.Date(as.POSIXct(Dtab_cf[,i], origin="1970-01-01"))
 #   Q_cms_cf = Qtab_cf[,i]*0.028316846592
-#   
+# 
 #   if (length(which(!is.na(Date))) < 365*5){next}
-#   
-#   
+# 
+# 
 #   # add horizontal lines to plot:
 #   layout(matrix(c(1,1,2,2), ncol=2, byrow=T),
 #          widths = c(1,3,2,2))
 #   par(mar=c(4,4,1,1))
-#   plot(Date, Q_cms, type="n", 
-#        ylim=range(Q_cms, na.rm=T), 
+#   plot(Date, Q_cms, type="n",
+#        ylim=range(Q_cms, na.rm=T),
 #        bty="n", axes=F, xlab="", ylab="",
 #        main=paste("Site:", sub("X", "", gaugeID[i])))
 #   abline(h=axis(2), lwd=0.2)
 #   box()
-#   
-#   
+# 
+# 
 #   # plot density distributions on y-axis:
 #   par(new=T)
 #   layout(matrix(c(3,2,1,1), ncol=2, byrow=T),
 #          widths = c(1,3,2,2))
-#   
+# 
 #   par(mar=c(4,4,1,0))
 #   kern = density(Q_cms, na.rm=T, bw="nrd0")
 #   kern_ar = density(Q_cms_ar, na.rm=T, bw="nrd0")
 #   kern_cf = density(Q_cms_cf, na.rm=T, bw="nrd0")
 #   plot(kern$y, kern$x, type="l",
 #        ylim = range(Q_cms, na.rm=T),
-#        xlim = range(c(kern$y, kern_ar$y, kern_cf$y)), 
+#        xlim = range(c(kern$y, kern_ar$y, kern_cf$y)),
 #        xlab = "Density",
 #        ylab = "Discharge (cms)",
 #        axes=T,
@@ -396,15 +440,15 @@ for (i in 1:ncol(Master_Value)){ # round(seq(1, ncol(Master_Value), length.out=2
 #        bty="n")
 #   lines(kern_ar$y, kern_ar$x, col="blue")
 #   lines(kern_cf$y, kern_cf$x, bty="n", col="red")
-#   
-#   
-#   
+# 
+# 
+# 
 #   # plot hydrograph and sampling time:
 #   par(new=T)
 #   layout(matrix(c(3,4,1,2), ncol=2, byrow=T),
 #          widths = c(1,3,2,2))
 #   par(mar=c(4,0,1,1))
-#   plot(Date, Q_cms, type="l", 
+#   plot(Date, Q_cms, type="l",
 #        ylim=range(Q_cms, na.rm=T),
 #        xlab="Date", ylab="",
 #        bty="n",
@@ -416,26 +460,26 @@ for (i in 1:ncol(Master_Value)){ # round(seq(1, ncol(Master_Value), length.out=2
 #   lab = Jan1[grep("5|0", substr(Jan1, 4, 4))]
 #   axis(1, Jan1, labels=F, lwd.ticks=0.5)
 #   axis(1, lab, format(lab, "%Y"), line=F)
-#   
-#   legend("topright", c("Full gauge record", "All returns", "Clear sky returns"), 
+# 
+#   legend("topright", c("Full gauge record", "All returns", "Clear sky returns"),
 #          text.col=c(1, 4, 2), cex=0.8, bg="white")
-#   
-#   
-#   # add a subset plot: 
+# 
+# 
+#   # add a subset plot:
 #   subInd = grep(substr(Date[round(length(which(!is.na(Date)))/2)], 1, 4), Date)
-#   
+# 
 #   Date_sub = Date[subInd]
 #   Q_cms_sub = Q_cms[subInd]
 #   Date_ar_sub = Date_ar[which(Date_ar>min(Date_sub) & Date_ar<max(Date_sub))]
 #   Q_cms_ar_sub = Q_cms_ar[which(Date_ar>min(Date_sub) & Date_ar<max(Date_sub))]
 #   Date_cf_sub = Date_cf[which(Date_cf>min(Date_sub) & Date_cf<max(Date_sub))]
 #   Q_cms_cf_sub = Q_cms_cf[which(Date_cf>min(Date_sub) & Date_cf<max(Date_sub))]
-#     
+# 
 #   par(new=T)
 #   layout(matrix(c(1,2,3,4,5,5,5,5), ncol=4, byrow=T),
 #          widths = c(1,1,1,1,1,1,1,1))
 #   par(mar=c(4,4,1,1))
-#   plot(Date_sub, Q_cms_sub, type="l", 
+#   plot(Date_sub, Q_cms_sub, type="l",
 #        ylim=range(Q_cms, na.rm=T),
 #        xlab="Date", ylab="",
 #        xaxt="n",
@@ -444,8 +488,8 @@ for (i in 1:ncol(Master_Value)){ # round(seq(1, ncol(Master_Value), length.out=2
 #   points(Date_cf_sub, Q_cms_cf_sub, pch=3, cex=0.8, col="red")
 #   fdotm = as.Date(grep("*01$", Date_sub, value=T))
 #   axis(1, fdotm, format(fdotm, "%b %Y"), line=F)
-#   
-#   legend("topright", c("Full gauge record", "All returns", "Clear sky returns"), 
+# 
+#   legend("topright", c("Full gauge record", "All returns", "Clear sky returns"),
 #          text.col=c(1, 4, 2), cex=0.8, bg="white")
 # }
 # 
