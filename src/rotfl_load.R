@@ -180,6 +180,7 @@ map_cloud<- mapview(cloud_join, zcol='cloud_free_frac', legend=T)
 
 mapshot(map_cloud,  file="figs/cloud_map.png", url ="figs/cloud_map.html"  )
 
+#write.csv(cloud_join,file='D:/GoogleDrive/ROTFL/out/cloudiness_gauges.csv')
 
 
 ### functions for mapping

@@ -1,0 +1,252 @@
+---
+title: "gauge_analysis"
+author: "John Gardner"
+date: "October 9, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(anytime)
+library(lubridate)
+library(modeest)
+library(sf)
+library(mapview)
+library(feather)
+library(equivalence)
+library(ggthemes)
+library(stats)
+library(MASS)
+library(broom)
+library(mapview)
+library(tidyr)
+library(dataRetrieval)
+library(htmlwidgets)
+library(ggthemes)
+library(leafpop)
+library(leaflet)
+#devtools::install_github("GRousselet/rogme")
+#library(rogme)
+## Equivalence testing
+#library(equivalence)
+library(Matching)
+library(twosamples)
+
+source("D:/Dropbox/projects/ROTFL/src/ROTFL_functions.R")
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r make_nests}
+
+load('out/rotfl_clean.RData')
+
+# 103 sites with all NA in discharge data. lets remove these
+bad_sites <- usgs_full %>% 
+  group_by(id) %>%
+  mutate(n = sum(!is.na(q))) %>%
+  filter(n ==0) %>%
+  distinct(id, .keep_all = T)
+
+# make nested data sets for mapping stats
+# had to set filters to still remove sites with too little data
+# that was messing up stats
+
+### Nest cloud free landsat overpasses
+nested_ls <- matched_sats %>%
+  group_by(id) %>%
+  mutate(n = sum(!is.na(q))) %>%
+  # filter to sites that have > 10 Q samples over landsat record
+  # cannot effectively compare distributions will small sample size
+  dplyr::filter(n > 10) %>%
+  dplyr::filter(!id %in% unique(bad_sites$id)) %>%
+  nest() %>%
+  rename(sat_data=data)
+
+# nest full usgs distribution and join to cloud free
+nested_gs <- usgs_full %>%
+  group_by(id) %>%
+  #mutate(n = sum(!is.na(q))) %>%
+  dplyr::filter(id %in% unique(nested_ls$id)) %>%
+  nest() %>%
+  inner_join(nested_ls,by='id')
+
+#
+# nested all (clouds or no clouds) landsat overpasses
+nested_ls_all <- landsat_all %>%
+  group_by(id) %>%
+  mutate(n = sum(!is.na(q))) %>%
+  # filter to sites that have > 10 Q samples over landsat record
+  # cannot effectively compare distributions will small sample size
+  dplyr::filter(n > 10) %>%
+  dplyr::filter(!id %in% unique(bad_sites$id)) %>%
+  nest() %>%
+  rename(sat_data=data)
+
+# nest full usgs distribution and join to all (clouds or no)
+nested_gs_all <- usgs_full %>%
+  group_by(id) %>%
+  #mutate(n = sum(!is.na(q))) %>%
+  dplyr::filter(id %in% unique(nested_ls_all$id)) %>%
+  nest() %>%
+  inner_join(nested_ls_all,by='id')
+
+#
+# compare cloudfree landsat Q samples to when landsat NOT sampled
+nested_not <- not_matched %>%
+  group_by(id) %>%
+  #mutate(n = sum(!is.na(q))) %>%
+  dplyr::filter(id %in% unique(nested_ls$id)) %>%
+  nest() %>%
+  inner_join(nested_ls,by='id')
+
+#
+# make map of fraction of days cloud free at sites
+cloud <- landsat_all %>%
+  dplyr::filter(id %in% unique(nested_sat$id)) %>%
+  filter(!is.na(q)) %>%
+  group_by(id) %>%
+  summarise(count_all = n()) %>%
+  left_join(landsat_cloud_free %>%
+              dplyr::filter(id %in% unique(nested_sat$id)) %>%
+              filter(!is.na(q)) %>%
+              group_by(id) %>%
+              summarise(count_cloudfree = n()),
+            by="id"  ) %>%
+  mutate(cloud_free_frac = count_cloudfree/count_all)
+  
+cloud_join <- cloud %>%
+  left_join(sites, by="id") %>%
+  st_as_sf(coords=c('dec_long_va','dec_lat_va'),crs=4326)
+
+map_cloud<- mapview(cloud_join, zcol='cloud_free_frac', legend=T)
+
+#mapshot(map_cloud,  file="figs/cloud_map.png", url ="figs/cloud_map.html"  )
+
+#write.csv(cloud_join,file='D:/GoogleDrive/ROTFL/out/cloudiness_gauges.csv')
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r compare_distributions, echo=FALSE}
+
+
+# Cloud free overpasses ks bootstrapped test
+ks_gs <- nested_gs %>% 
+# slice(1:3) %>%
+  mutate(ks = map2(data,sat_data,myboots)) %>%
+  mutate(rbi = map(data, RBIcalc)) %>%
+  unnest(ks) %>%
+  unnest(rbi) %>%
+  dplyr::select(-data, -sat_data) %>%
+  mutate(ks_test = ifelse(pvalue_boot < 0.05, "different", "same"))
+
+ks_gs <- ks_gs %>%
+  mutate(test = "ks_cloud_free")
+
+# All landsat passes ks bootstrapped test
+ks_gs_all <- nested_gs_all %>% 
+# slice(1:3) %>%
+  mutate(ks = map2(data,sat_data,myboots)) %>%
+  mutate(rbi = map(data, RBIcalc)) %>%
+  unnest(ks) %>%
+  unnest(rbi) %>%
+  dplyr::select(-data, -sat_data) %>%
+  mutate(ks_test = ifelse(pvalue_boot < 0.05, "different", "same"))
+
+ks_gs_all <- ks_gs_all %>%
+  mutate(test = "ks_all_returns")
+
+# comparing landsat overpasses with Q with OUT landsat overpass
+ks_gs_not <- nested_not %>% 
+# slice(1:3) %>%
+  mutate(ks = map2(data,sat_data,myboots)) %>%
+  mutate(rbi = map(data, RBIcalc)) %>%
+  unnest(ks) %>%
+  unnest(rbi) %>%
+  dplyr::select(-data, -sat_data) %>%
+  mutate(ks_test = ifelse(pvalue_boot < 0.05, "different", "same"))
+
+ks_gs_not <- ks_gs_not %>%
+  mutate(test = "ks_cloud_free_unmatched")
+
+# make one long dataframe of different comparisons
+ks_bind <- bind_rows(ks_gs, ks_gs_all, ks_gs_not)
+
+save(ks_gs, ks_gs_all, ks_gs_not, ks_bind, file='D:/GoogleDrive/ROTFL/out/rotfl_kstats.RData')
+```
+
+
+
+```{r gauge_percentiles, echo=F}
+
+
+# make look up table of population flow percentiles by site to later join to find what population percentiles corresponed with min/max sample Q
+
+percentiles_pop <- full_sats %>%
+  dplyr::select(id, q_pop) %>%
+  arrange(id, q_pop) %>%
+  group_by(id) %>%
+  mutate(prob_pop = 1-cume_dist(q_pop)) %>%
+  distinct(id, q_pop, prob_pop, .keep_all = T)
+  
+# extract mode, max, min per gage. find mode, min, max for population and sample per site. 
+flow_stats <- full_sats %>%
+  dplyr::select(id, q_sample, q_pop) %>%
+  # remove sites that have no landsat samples, or no gage flow data
+  dplyr::filter(id %in% unique(nested_ls$id)) %>%
+  # calculate modal, max, min Q for sample and population
+  group_by(id) %>%
+  summarise_at(vars(q_sample, q_pop), list(~ min(., na.rm=T), ~ max(., na.rm=T), ~ median(., na.rm = TRUE), ~mlv(., na.rm=T ))) %>%
+  rename(q_sample_mode = q_sample_mlv, q_pop_mode = q_pop_mlv) %>%
+  mutate(mode_ratio = q_sample_mode / q_pop_mode) %>%
+  ungroup() %>%
+  # join in what "poplution" flow percentile corresponds to sample max/min 
+  inner_join(., percentiles_pop, by=c("id", "q_sample_max"="q_pop")) %>%
+  rename(prob_sample_max = prob_pop ) %>% 
+  inner_join(., percentiles_pop, by=c("id", "q_sample_min"="q_pop")) %>%
+  rename(prob_sample_min = prob_pop) %>% 
+  mutate(percentile_range_sample = (prob_sample_min - prob_sample_max) *100)
+  
+# join to usgs site info
+flow_stats_site <- flow_stats %>%
+  left_join(sites, by = "id") 
+
+
+# bind ks tests to flow stats and site info and write to csv
+ks_bind_join <- ks_bind %>%
+  inner_join(flow_stats_site, by="id")
+
+write_csv(ks_bind_join, "D:/GoogleDrive/ROTFL/out/ks_tests_sites_all.csv")
+
+
+```
+
+
+```{r figures}
+
+# make some maps of how well landsat captures modal and range of Q per gage 
+
+# st_as_sf(coords = c("dec_long_va", "dec_lat_va"), crs= 4326) 
+
+
+#mapview(join_sum_site, zcol='percentile_range_sample', legend=T )
+
+
+
+
+
+```
+
