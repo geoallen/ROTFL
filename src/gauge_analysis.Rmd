@@ -48,7 +48,7 @@ When you click the **Knit** button a document will be generated that includes bo
 
 ```{r make_nests}
 
-load('out/rotfl_clean.RData')
+load('D:/GoogleDrive/ROTFL/out/rotfl_clean.RData')
 
 # 103 sites with all NA in discharge data. lets remove these
 bad_sites <- usgs_full %>% 
@@ -112,12 +112,12 @@ nested_not <- not_matched %>%
 #
 # make map of fraction of days cloud free at sites
 cloud <- landsat_all %>%
-  dplyr::filter(id %in% unique(nested_sat$id)) %>%
+  dplyr::filter(id %in% unique(nested_ls$id)) %>%
   filter(!is.na(q)) %>%
   group_by(id) %>%
   summarise(count_all = n()) %>%
   left_join(landsat_cloud_free %>%
-              dplyr::filter(id %in% unique(nested_sat$id)) %>%
+              dplyr::filter(id %in% unique(nested_ls$id)) %>%
               filter(!is.na(q)) %>%
               group_by(id) %>%
               summarise(count_cloudfree = n()),
@@ -227,7 +227,8 @@ flow_stats_site <- flow_stats %>%
 
 # bind ks tests to flow stats and site info and write to csv
 ks_bind_join <- ks_bind %>%
-  inner_join(flow_stats_site, by="id")
+  inner_join(flow_stats_site, by="id") %>%
+  ungroup()
 
 write_csv(ks_bind_join, "D:/GoogleDrive/ROTFL/out/ks_tests_sites_all.csv")
 
@@ -235,14 +236,16 @@ write_csv(ks_bind_join, "D:/GoogleDrive/ROTFL/out/ks_tests_sites_all.csv")
 ```
 
 
-```{r figures}
+```{r figures, echo=F}
 
 # make some maps of how well landsat captures modal and range of Q per gage 
 
-# st_as_sf(coords = c("dec_long_va", "dec_lat_va"), crs= 4326) 
+ks_sf <- ks_bind_join %>%
+  filter(test == "ks_cloud_free") %>%
+  st_as_sf(coords = c("dec_long_va", "dec_lat_va"), crs= 4326) 
 
 
-#mapview(join_sum_site, zcol='percentile_range_sample', legend=T )
+mapview(ks_sf, zcol='d_boot',  legend=T )
 
 
 
