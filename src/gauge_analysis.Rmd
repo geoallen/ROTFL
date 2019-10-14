@@ -42,10 +42,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
 ```{r make_nests}
 
 load('D:/GoogleDrive/ROTFL/out/rotfl_clean.RData')
@@ -136,9 +132,7 @@ map_cloud<- mapview(cloud_join, zcol='cloud_free_frac', legend=T)
 
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
+## Ks tests
 
 ```{r compare_distributions, echo=FALSE}
 
@@ -185,7 +179,7 @@ ks_gs_not <- ks_gs_not %>%
 # make one long dataframe of different comparisons
 ks_bind <- bind_rows(ks_gs, ks_gs_all, ks_gs_not)
 
-save(ks_gs, ks_gs_all, ks_gs_not, ks_bind, file='D:/GoogleDrive/ROTFL/out/rotfl_kstats.RData')
+#save(ks_gs, ks_gs_all, ks_gs_not, ks_bind, file='D:/GoogleDrive/ROTFL/out/rotfl_kstats.RData')
 ```
 
 
@@ -230,7 +224,7 @@ ks_bind_join <- ks_bind %>%
   inner_join(flow_stats_site, by="id") %>%
   ungroup()
 
-write_csv(ks_bind_join, "D:/GoogleDrive/ROTFL/out/ks_tests_sites_all.csv")
+#write_csv(ks_bind_join, "D:/GoogleDrive/ROTFL/out/ks_tests_sites_all.csv")
 
 
 ```

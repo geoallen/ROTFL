@@ -114,7 +114,7 @@ sites <- readNWISsite(ids) %>% as_tibble() %>%
 site_sf <- st_as_sf(sites,coords=c('dec_long_va','dec_lat_va'),crs=4326)
 
 #Save as .RData file
-save(landsat_cloud_free, landsat_all, matched_sats, usgs_full, not_matched, sites, site_sf,file='D:/GoogleDrive/ROTFL/out/rotfl_clean.RData')
+#save(landsat_cloud_free, landsat_all, matched_sats, usgs_full, not_matched, full_sats, sites, site_sf, file='D:/GoogleDrive/ROTFL/out/rotfl_clean.RData')
 
 ```
 
