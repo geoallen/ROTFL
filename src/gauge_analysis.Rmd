@@ -234,13 +234,67 @@ ks_bind_join <- ks_bind %>%
 
 # make some maps of how well landsat captures modal and range of Q per gage 
 
-ks_sf <- ks_bind_join %>%
-  filter(test == "ks_cloud_free") %>%
-  st_as_sf(coords = c("dec_long_va", "dec_lat_va"), crs= 4326) 
+ks_bind_join <- read_csv("D:/GoogleDrive/ROTFL/out/ks_tests_sites_all.csv")
+
+cloud_ks <- cloud_join %>%
+  inner_join(ks_bind_join %>%
+               filter(test =="ks_cloud_free") %>%
+               dplyr::select(id:percentile_range_sample),
+             by="id")
+
+# try rbi, percentile_range_sample, drain_area_va
+plot1 <- ggplot(cloud_ks, aes(x=cloud_free_frac, y=d_boot, color=ks_test))+
+  geom_point()+
+ # geom_smooth(method="lm") +
+  theme_few() +
+  xlab("Fraction of cloud-free overpasses") +
+  ylab("D statistic (KS test)") +
+  theme(legend.position = c(0.78, 0.94),
+        legend.background = element_blank(),
+        legend.text = element_text(size=9),
+        axis.title = element_text(size=10),
+        axis.text = element_text(size=10)) +
+  scale_color_manual(values=c("grey", "black"), labels=c("p < 0.05", "p > 0.05"), name="")
+  
+
+plot2 <- ggplot(cloud_ks) +
+  geom_point(aes(x=rbi, y=d_boot, color=ks_test))+
+  theme_few() +
+  scale_x_log10(breaks = c(0.03, 0.1, 0.3, 1.0),
+                labels = c("0.03", "0.1", "0.3", "1.0")) +
+  xlab("Flashiness Index") +
+  ylab("") +
+  theme(legend.position = "none",
+        legend.background = element_blank(),
+        axis.title = element_text(size=10),
+        axis.text = element_text(size=10)) +
+  scale_color_manual(values=c("grey", "black"), labels=c("p < 0.05", "p > 0.05"), name="") 
+  
 
 
-mapview(ks_sf, zcol='d_boot',  legend=T )
+#library(ggpubr)
 
+ggarrange(plot1, plot2, nrow=1, ncol=2)
+
+ggsave(paste('D:/Dropbox/projects/ROTFL/figs/', "D_rbi_clouds.png", sep=""), units='in', width = 6, height=3, dpi = 300)
+
+# >90% of gages capture 97% perecntiles of flow
+
+
+lm_same <- lm(d_boot~cloud_free_frac, data=cloud_ks %>%
+                filter(ks_test=="same"))
+
+lm_diff <- lm(d_boot~cloud_free_frac, data=cloud_ks %>%
+                filter(ks_test=="different"))
+
+
+# 
+# ks_sf <- ks_bind_join %>%
+#   filter(test == "ks_cloud_free") %>%
+#   st_as_sf(coords = c("dec_long_va", "dec_lat_va"), crs= 4326) 
+# 
+# mapview(ks_sf, zcol='d_boot',  legend=T )
+# 
 
 
 
