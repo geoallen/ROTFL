@@ -1,0 +1,348 @@
+---
+title: "gauge_analysis"
+author: "John Gardner"
+date: "October 9, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(anytime)
+library(lubridate)
+library(sf)
+library(mapview)
+library(feather)
+library(equivalence)
+library(ggthemes)
+library(stats)
+library(MASS)
+library(broom)
+library(mapview)
+library(tidyr)
+library(dataRetrieval)
+library(htmlwidgets)
+library(ggthemes)
+library(leafpop)
+library(leaflet)
+#devtools::install_github("GRousselet/rogme")
+#library(rogme)
+## Equivalence testing
+#library(equivalence)
+library(Matching)
+library(twosamples)
+source("src/ROTFL_functions.R")
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data setup 
+
+```{r make_nests}
+load('out/rotfl_clean.RData')
+# 103 sites with all NA in discharge data. lets remove these
+bad_sites <- usgs_full %>% 
+  group_by(id) %>%
+  mutate(n = sum(!is.na(q))) %>%
+  filter(n ==0) %>%
+  distinct(id, .keep_all = T)
+# make nested data sets for mapping stats
+# had to set filters to still remove sites with too little data
+# that was messing up stats
+### Nest cloud free landsat overpasses
+nested_ls <- matched_sats %>%
+  group_by(id) %>%
+  mutate(n = sum(!is.na(q))) %>%
+  # filter to sites that have > 10 Q samples over landsat record
+  # cannot effectively compare distributions will small sample size
+  dplyr::filter(n > 10) %>%
+  dplyr::filter(!id %in% unique(bad_sites$id)) %>%
+  nest() %>%
+  rename(sat_data=data)
+# nest full usgs distribution and join to cloud free
+nested_gs <- usgs_full %>%
+  group_by(id) %>%
+  #mutate(n = sum(!is.na(q))) %>%
+  dplyr::filter(id %in% unique(nested_ls$id)) %>%
+  nest() %>%
+  inner_join(nested_ls,by='id')
+#
+# nested all (clouds or no clouds) landsat overpasses
+nested_ls_all <- landsat_all %>%
+  group_by(id) %>%
+  mutate(n = sum(!is.na(q))) %>%
+  # filter to sites that have > 10 Q samples over landsat record
+  # cannot effectively compare distributions will small sample size
+  dplyr::filter(n > 10) %>%
+  dplyr::filter(!id %in% unique(bad_sites$id)) %>%
+  nest() %>%
+  rename(sat_data=data)
+# nest full usgs distribution and join to all (clouds or no)
+nested_gs_all <- usgs_full %>%
+  group_by(id) %>%
+  #mutate(n = sum(!is.na(q))) %>%
+  dplyr::filter(id %in% unique(nested_ls_all$id)) %>%
+  nest() %>%
+  inner_join(nested_ls_all,by='id')
+#
+# compare cloudfree landsat Q samples to when landsat NOT sampled
+nested_not <- not_matched %>%
+  group_by(id) %>%
+  #mutate(n = sum(!is.na(q))) %>%
+  dplyr::filter(id %in% unique(nested_ls$id)) %>%
+  nest() %>%
+  inner_join(nested_ls,by='id')
+#
+# make map of fraction of days cloud free at sites
+cloud <- landsat_all %>%
+  dplyr::filter(id %in% unique(nested_ls$id)) %>%
+  filter(!is.na(q)) %>%
+  group_by(id) %>%
+  summarise(count_all = n()) %>%
+  left_join(landsat_cloud_free %>%
+              dplyr::filter(id %in% unique(nested_ls$id)) %>%
+              filter(!is.na(q)) %>%
+              group_by(id) %>%
+              summarise(count_cloudfree = n()),
+            by="id"  ) %>%
+  mutate(cloud_free_frac = count_cloudfree/count_all)
+  
+cloud_join <- cloud %>%
+  left_join(sites, by="id") %>%
+  st_as_sf(coords=c('dec_long_va','dec_lat_va'),crs=4326)
+
+
+map_cloud<- mapview(cloud_join, zcol='cloud_free_frac', legend=T)
+#mapshot(map_cloud,  file="figs/cloud_map.png", url ="figs/cloud_map.html"  )
+#write.csv(cloud_join,file='D:/GoogleDrive/ROTFL/out/cloudiness_gauges.csv')
+```
+
+## KS Tests
+
+```{r compare_distributions, eval= F, echo=FALSE}
+# Cloud free overpasses ks bootstrapped test
+ks_gs <- nested_gs %>% 
+# slice(1:3) %>%
+  mutate(ks = map2(data,sat_data,myboots)) %>%
+  mutate(rbi = map(data, RBIcalc)) %>%
+  unnest(ks) %>%
+  unnest(rbi) %>%
+  dplyr::select(-data, -sat_data) %>%
+  mutate(ks_test = ifelse(pvalue_boot < 0.05, "different", "same"))
+ks_gs <- ks_gs %>%
+  mutate(test = "ks_cloud_free")
+# All landsat passes ks bootstrapped test
+ks_gs_all <- nested_gs_all %>% 
+# slice(1:3) %>%
+  mutate(ks = map2(data,sat_data,myboots)) %>%
+  mutate(rbi = map(data, RBIcalc)) %>%
+  unnest(ks) %>%
+  unnest(rbi) %>%
+  dplyr::select(-data, -sat_data) %>%
+  mutate(ks_test = ifelse(pvalue_boot < 0.05, "different", "same"))
+ks_gs_all <- ks_gs_all %>%
+  mutate(test = "ks_all_returns")
+# comparing landsat overpasses with Q with OUT landsat overpass
+ks_gs_not <- nested_not %>% 
+# slice(1:3) %>%
+  mutate(ks = map2(data,sat_data,myboots)) %>%
+  mutate(rbi = map(data, RBIcalc)) %>%
+  unnest(ks) %>%
+  unnest(rbi) %>%
+  dplyr::select(-data, -sat_data) %>%
+  mutate(ks_test = ifelse(pvalue_boot < 0.05, "different", "same"))
+ks_gs_not <- ks_gs_not %>%
+  mutate(test = "ks_cloud_free_unmatched")
+# make one long dataframe of different comparisons
+ks_bind <- bind_rows(ks_gs, ks_gs_all, ks_gs_not)
+save(ks_gs, ks_gs_all, ks_gs_not, ks_bind, file='out/rotfl_kstats.RData')
+```
+
+
+```{r}
+load('out/rotfl_kstats.RData')
+
+
+```
+
+
+
+## Get average cloud score per scene
+
+```{r}
+clouds <- read_feather('in/clouds.feather') %>%
+  dplyr::select(PATH = WRS_PATH,
+         ROW = WRS_ROW,
+         score = CLOUD_COVER)
+
+cloud_mean <- clouds %>%
+  group_by(PATH,ROW) %>%
+  summarize(score=mean(score,na.rm=T))
+
+
+```
+
+
+## Subset grwl to usa
+
+```{r,eval=F}
+grwl.usa <- st_read('in/GRWL/GRWL_summaryStats.shp') %>%
+  st_transform(.,2163) %>%
+  st_intersection(.,usa) %>%
+  na.omit(.) %>%
+  st_simplify(.,dTolerance=2000)
+
+mapview(grwl.usa)
+save(grwl.usa,file='out/grwl_usa.RData')
+```
+
+
+
+
+##
+
+```{r}
+library(USAboundaries)
+load('out/grwl_usa.RData')
+wrs <- st_read('in/wrs/WRS2_descending.shp') %>%
+  st_transform(.,2163) %>%
+  st_buffer(.,0) 
+
+
+usa = us_states()%>%
+    st_transform(.,2163) %>%
+  st_buffer(.,500)
+
+
+wrs.usa <- wrs[usa,]
+
+
+
+usa.cld <- inner_join(wrs.usa,
+                      cloud_mean,
+                      by=c('PATH','ROW')) %>%
+  mutate(id = 1:nrow(.))%>%
+  na.omit(.)
+
+
+#Reproject onto ARD grid
+
+usa_ard <- st_read('in/CONUS_ARD_grid/conus_ard_grid.shp') %>%
+  st_transform(2163) %>%
+  rbind(.,
+        st_read('in/Alaska_ARD_grid/ak_ard_grid.shp') %>%
+        st_transform(2163)) %>%
+  mutate(ard_id = 1:nrow(.))
+
+cld_ard <- st_join(usa_ard,usa.cld) %>%
+  group_by(ard_id) %>%
+  summarize(score = mean(score,na.rm=T)) %>%
+  na.omit(.) %>%
+  st_intersection(usa) 
+
+```
+
+
+```{r}
+#This code is adapted from here: 
+# https://rud.is/b/2014/11/16/moving-the-earth-well-alaska-hawaii-with-r/
+#Pull out alaska
+rotation = function(a){
+  r = a * pi / 180 #degrees to radians
+  matrix(c(cos(r), sin(r), -sin(r), cos(r)), nrow = 2, ncol = 2)
+} 
+
+
+ak <- cld_ard %>% 
+  filter(name == 'Alaska')
+
+
+ak_grwl <- grwl.usa[ak,] %>%
+  st_intersection(ak) 
+
+#Shifter thing
+
+sf_elision <- function(st,base,shift=c(1000000, -5000000)){
+  ak_geo_shift <- st_geometry(st) + 
+    shift
+  
+  
+  single_center <- base %>%
+    group_by() %>%
+    summarize() %>%
+    slice(rep(1:n(),each=nrow(st))) %>%
+    st_centroid() %>%
+    st_geometry() 
+  
+  shift_centers <- single_center + shift
+  
+  rote <- (ak_geo_shift-shift_centers)*rotation(-35)*0.6 + shift_centers
+  
+  flipped <- st_set_geometry(st, rote %>% 
+                               st_set_crs(.,2163))
+  return(flipped)
+}
+
+
+
+ak_elide <- sf_elision(ak,base=ak) %>%
+  st_transform(2163)
+
+grwl_elide <- sf_elision(ak_grwl,base=ak) %>%
+  st_transform(2163)
+
+
+usa.cld.cray <- cld_ard %>%
+  filter(!name %in% c('Hawaii','Alaska')) %>%
+  rbind(.,ak_elide) %>%
+  group_by(ard_id) %>%
+  summarize(score=mean(score,na.rm=T))
+
+
+
+grwl_ak_elide <- grwl.usa %>%
+  filter(!OBJECTID %in% grwl_elide$OBJECTID) %>%
+  rbind(.,grwl_elide %>% dplyr::select(names(grwl.usa)))
+
+
+library(tmap)
+tm_shape(usa.cld.cray) +
+  tm_polygons(col='score',style='cont',palette='Greys') +
+  tm_shape(grwl_ak_elide) +
+  tm_lines(col='blue')
+
+
+```
+
+
+```{r}
+
+fran = franconia
+new_bb = c(8, 48, 12, 50)
+names(new_bb) = c("xmin", "ymin", "xmax", "ymax")
+attr(new_bb, "class") = "bbox"
+
+attr(st_geometry(fran), "bbox") = new_bb
+
+mapview(st_bbox(franconia)) +
+  mapview(st_bbox(fran), col.regions = "orange")
+```
+
+
+```{r}
+nc = st_read(system.file("shape/nc.shp", package="sf"), quiet = TRUE)
+ncg = st_geometry(nc)
+plot(ncg, border = 'grey')
+cntrd = st_centroid(ncg)
+rot = function(a) matrix(c(cos(a), sin(a), -sin(a), cos(a)), 2, 2)
+## Warning in st_centroid.sfc(ncg): st_centroid does not give correct
+## centroids for longitude/latitude data
+ncg2 = (ncg - cntrd) * rot(pi/2) * .75 + cntrd
+plot(ncg2, add = TRUE)
+plot(cntrd, col = 'red', add = TRUE, cex = .5)
+
+str(nc)
+str(cntrd)
+
+```
+

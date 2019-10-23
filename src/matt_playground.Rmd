@@ -142,6 +142,43 @@ spatial <- site_sf %>%
 qpal <- colorNumeric("Reds", spatial$d, n = 7)
 ```
 
+## Time series of usgs gauges
+
+```{r,eval=F}
+library(xts)
+library(dygraphs)
+
+
+counts <- usgs_full %>%
+  group_by(id) %>%
+  summarize(count=n()) %>%
+  arrange(desc(count)) %>%
+  slice(1:50)
+
+head(counts)
+names(usgs_full)
+
+?spread
+most <- usgs_full %>%
+  select(-sat) %>%
+  mutate(date=as.Date(date)) %>%
+  filter(id %in% counts$id) %>% 
+  group_by(date,id) %>%
+  summarize(q=mean(q)) %>%
+  spread(.,key=id,q,fill=NA) %>%
+  filter(!is.na(date)) %>%
+  ungroup()
+
+
+most.xts <- xts(most %>% select(-date),order.by=most$date) 
+
+dygraph(most.xts)
+
+```
+
+
+
+
 ## Map (takes a long time, don't run)
 ```{r,eval=F}
 big_map <- leaflet() %>%
