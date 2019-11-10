@@ -33,7 +33,7 @@ library(leaflet)
 library(Matching)
 library(twosamples)
 source("src/ROTFL_functions.R")
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE,cache = T)
 ```
 
 ## Data setup 
@@ -190,9 +190,9 @@ grwl.usa <- st_read('in/GRWL/GRWL_summaryStats.shp') %>%
   st_transform(.,2163) %>%
   st_intersection(.,usa) %>%
   na.omit(.) %>%
-  st_simplify(.,dTolerance=2000)
+  st_simplify(.,dTolerance=100)
 
-mapview(grwl.usa)
+#mapview(grwl.usa)
 save(grwl.usa,file='out/grwl_usa.RData')
 ```
 
@@ -253,96 +253,103 @@ rotation = function(a){
 } 
 
 
-ak <- cld_ard %>% 
+
+# Subset ak tiles
+ak <- cld_ard %>%
   filter(name == 'Alaska')
 
-
-ak_grwl <- grwl.usa[ak,] %>%
-  st_intersection(ak) 
+#Subset gauges
+gauges <- st_transform(site_sf, crs = st_crs(ak))
+ak_gauges <- gauges[ak, ]
+  
+#Subset grwl
+ak_grwl <- grwl.usa[ak, ] %>%
+st_intersection(ak)
 
 #Shifter thing
 
-sf_elision <- function(st,base,shift=c(1000000, -5000000)){
-  ak_geo_shift <- st_geometry(st) + 
+sf_elision <- function(st, base, shift = c(1000000,-4900000)) {
+  ak_geo_shift <- st_geometry(st) +
     shift
   
   
   single_center <- base %>%
     group_by() %>%
     summarize() %>%
-    slice(rep(1:n(),each=nrow(st))) %>%
+    slice(rep(1:n(), each = nrow(st))) %>%
     st_centroid() %>%
-    st_geometry() 
+    st_geometry()
   
   shift_centers <- single_center + shift
   
-  rote <- (ak_geo_shift-shift_centers)*rotation(-35)*0.6 + shift_centers
+  rote <-
+    (ak_geo_shift - shift_centers) * rotation(-35) * 0.6 + shift_centers
   
-  flipped <- st_set_geometry(st, rote %>% 
-                               st_set_crs(.,2163))
+  flipped <- st_set_geometry(st, rote %>%
+                               st_set_crs(., 2163))
   return(flipped)
 }
 
 
-
-ak_elide <- sf_elision(ak,base=ak) %>%
+ak_gauge_elide <- sf_elision(ak_gauges,ak) %>%
   st_transform(2163)
 
-grwl_elide <- sf_elision(ak_grwl,base=ak) %>%
+ak_elide <- sf_elision(ak, base = ak) %>%
+  st_transform(2163)
+
+grwl_elide <- sf_elision(ak_grwl, base = ak) %>%
   st_transform(2163)
 
 
 usa.cld.cray <- cld_ard %>%
-  filter(!name %in% c('Hawaii','Alaska')) %>%
-  rbind(.,ak_elide) %>%
+  filter(!name %in% c('Hawaii', 'Alaska')) %>%
+  rbind(., ak_elide) %>%
   group_by(ard_id) %>%
-  summarize(score=mean(score,na.rm=T))
+  summarize(`Mean cloud cover` = mean(score, na.rm = T))
 
 
 
 grwl_ak_elide <- grwl.usa %>%
   filter(!OBJECTID %in% grwl_elide$OBJECTID) %>%
-  rbind(.,grwl_elide %>% dplyr::select(names(grwl.usa)))
+  rbind(., grwl_elide %>% dplyr::select(names(grwl.usa))) %>%
+  filter(st_is_valid(.))
+
+gauges_elide <- gauges %>%
+  filter(!id %in% ak_gauges$id) %>%
+  rbind(.,ak_gauge_elide)
 
 
+```
+
+
+```{r}
 library(tmap)
+
+greypal <- c('grey70','gray20')
+png(filename='intro_map.png',
+    width=6,height=5,
+    units='in',
+    res=300)
 tm_shape(usa.cld.cray) +
-  tm_polygons(col='score',style='cont',palette='Greys') +
+  tm_fill(col='Mean cloud cover',
+          style='cont',
+          palette=greypal,
+          legend.is.portrait = F,
+          breaks=c(10,20,30,40,50,60))+ 
   tm_shape(grwl_ak_elide) +
-  tm_lines(col='blue')
+    tm_lines(col='blue') + 
+  tm_shape(gauges_elide) + 
+    tm_bubbles(col='red',border.col='gray30',size=0.07) + 
+  tm_layout(legend.position = c(0.6,0.01),
+            legend.width = -0.9,
+            legend.title.size = 0.9) + 
+  tm_add_legend(type='symbol',
+                labels=c('USGS gauge'),
+                title='',
+                col='red')
 
-
+dev.off()
 ```
 
 
-```{r}
-
-fran = franconia
-new_bb = c(8, 48, 12, 50)
-names(new_bb) = c("xmin", "ymin", "xmax", "ymax")
-attr(new_bb, "class") = "bbox"
-
-attr(st_geometry(fran), "bbox") = new_bb
-
-mapview(st_bbox(franconia)) +
-  mapview(st_bbox(fran), col.regions = "orange")
-```
-
-
-```{r}
-nc = st_read(system.file("shape/nc.shp", package="sf"), quiet = TRUE)
-ncg = st_geometry(nc)
-plot(ncg, border = 'grey')
-cntrd = st_centroid(ncg)
-rot = function(a) matrix(c(cos(a), sin(a), -sin(a), cos(a)), 2, 2)
-## Warning in st_centroid.sfc(ncg): st_centroid does not give correct
-## centroids for longitude/latitude data
-ncg2 = (ncg - cntrd) * rot(pi/2) * .75 + cntrd
-plot(ncg2, add = TRUE)
-plot(cntrd, col = 'red', add = TRUE, cex = .5)
-
-str(nc)
-str(cntrd)
-
-```
 
