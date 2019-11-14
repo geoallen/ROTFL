@@ -180,6 +180,7 @@ clouds <- read_feather('in/clouds.feather') %>%
          score = CLOUD_COVER)
 
 cloud_mean <- clouds %>%
+  filter(score < 20) %>%
   group_by(PATH,ROW) %>%
   summarize(score=mean(score,na.rm=T),
             count=n())
@@ -303,14 +304,14 @@ min_tile_area <- usa.cld %>%
   pull(area) %>% 
   min(.)
 
-min_tile_area
+
 unique_geo <- distinct(polys_only, geometry,.keep_all=T) %>%
   st_buffer(-100) %>%
   mutate(small_id=1:nrow(.)) %>%
   mutate(area=st_area(.)) %>%
   filter(as.numeric(area) > 0) %>%
   #Drop original large tiles
-  filter(area < min_tile_area) %>%
+  #filter(area < min_tile_area) %>%
   arrange(desc(area))
 
 
@@ -322,7 +323,7 @@ super_geos <- st_join(unique_geo,usa.cld,st_within) %>%
   arrange(desc(area)) 
 
 # Mapview check
-mapview(super_geos,zcol='count')
+#mapview(super_geos,zcol='count')
 ```
 
 
@@ -423,12 +424,12 @@ png(filename='intro_map_path_row.png',
     res=300)
 tm_shape(path_cld_cray) +
   tm_fill(col='count',
-          style='log10',
-          palette=greypal,
-          legend.is.portrait = F) +
-          #breaks=c(3,30,300,900,3300))+ 
+          style='cont',
+          palette='cividis',
+          legend.is.portrait = F, 
+          breaks=c(1,500,1500,2550)) +
   tm_shape(grwl_ak_elide) +
-    tm_lines(col='blue') + 
+    tm_lines(col='#00d5ff') + 
   tm_shape(gauges_elide) + 
     tm_bubbles(col='red',border.col='gray30',size=0.07) + 
   tm_layout(legend.position = c(0.6,0.01),
@@ -508,7 +509,7 @@ usa.cld.cray <- cld_ard %>%
   rbind(., ak_elide) %>%
   group_by(ard_id) %>%
   summarize(`Mean cloud cover` = mean(score, na.rm = T),
-            count = min(count,na.rm=T))
+            count = min(count,na.rm=T)) 
 
 
 grwl_ak_elide <- grwl.usa %>%
@@ -536,8 +537,8 @@ tm_shape(usa.cld.cray) +
   tm_polygons(col='count',
           style='cont',
           palette=greypal,
-          legend.is.portrait = F) +
-          #breaks=c(10,20,30,40,50,60))+ 
+          legend.is.portrait = F,
+          breaks=c(1,100,300,1000,3000)) 
   tm_shape(grwl_ak_elide) +
     tm_lines(col='blue') + 
   tm_shape(gauges_elide) + 
