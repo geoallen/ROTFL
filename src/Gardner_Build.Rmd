@@ -38,8 +38,12 @@ knitr::opts_chunk$set(echo = TRUE,cache = T)
 
 ## Data setup 
 
-```{r make_nests}
+```{r load, eval=F}
 load('out/rotfl_clean.RData')
+```
+
+
+```{r make_nests, eval=F}
 # 103 sites with all NA in discharge data. lets remove these
 bad_sites <- usgs_full %>% 
   group_by(id) %>%
@@ -177,7 +181,8 @@ clouds <- read_feather('in/clouds.feather') %>%
 
 cloud_mean <- clouds %>%
   group_by(PATH,ROW) %>%
-  summarize(score=mean(score,na.rm=T))
+  summarize(score=mean(score,na.rm=T),
+            count=n())
 
 
 ```
@@ -204,7 +209,11 @@ save(grwl.usa,file='out/grwl_usa.RData')
 ```{r}
 library(USAboundaries)
 load('out/grwl_usa.RData')
-wrs <- st_read('in/wrs/WRS2_descending.shp') %>%
+
+raw_wrs <- st_read('in/wrs/WRS2_descending.shp')
+
+
+wrs <- raw_wrs %>%
   st_transform(.,2163) %>%
   st_buffer(.,0) 
 
@@ -222,7 +231,11 @@ usa.cld <- inner_join(wrs.usa,
                       cloud_mean,
                       by=c('PATH','ROW')) %>%
   mutate(id = 1:nrow(.))%>%
-  na.omit(.)
+  na.omit(.) %>%
+  filter(st_is_valid(.)) %>%
+  filter(PATH < 84) %>%
+  arrange(PATH,ROW)
+
 
 
 #Reproject onto ARD grid
@@ -234,15 +247,204 @@ usa_ard <- st_read('in/CONUS_ARD_grid/conus_ard_grid.shp') %>%
         st_transform(2163)) %>%
   mutate(ard_id = 1:nrow(.))
 
-cld_ard <- st_join(usa_ard,usa.cld) %>%
+
+cld_ard <- usa.cld %>% 
+  st_join(usa_ard) %>% #join ard here if wanted
   group_by(ard_id) %>%
-  summarize(score = mean(score,na.rm=T)) %>%
+  summarize(score = mean(score,na.rm=T),
+            count=mean(count,na.rm=T)) %>%
   na.omit(.) %>%
   st_intersection(usa) 
+
+
+```
+
+## Crazy dumb code cuz SF is kinda broke
+
+
+
+```{r}
+paths <- unique(usa.cld$PATH)
+
+
+path_overlapper <- function(path){
+  print(path)
+  sub <- usa.cld %>%
+    filter(PATH %in% c(path,path+1)) %>%
+    arrange(PATH) %>%
+    lwgeom::st_make_valid()
+  splits <- try(st_intersection(sub))
+  if(class(splits)[1] == 'try-error'){
+    sub_opp <- usa.cld %>%
+    filter(PATH %in% c(path,path+1)) %>%
+    arrange(-PATH) %>%
+    lwgeom::st_make_valid()
+    splits <- try(st_intersection(sub_opp))
+  }
+  if(class(splits)[1] == 'try-error'){
+    print(paste0(path,'is still busted'))
+  }
+  return(splits)
+}
+
+
+
+splits <- map(paths,path_overlapper)
+
+bind_splits <- do.call(rbind,splits) %>%
+  lwgeom::st_make_valid(.) %>%
+  dplyr::select(PATH,ROW,AREA,n.overlaps) 
+
+polys_only <- st_collection_extract(bind_splits,'POLYGON')
+
+
+min_tile_area <- usa.cld %>%
+  mutate(area=st_area(.)) %>%
+  pull(area) %>% 
+  min(.)
+
+min_tile_area
+unique_geo <- distinct(polys_only, geometry,.keep_all=T) %>%
+  st_buffer(-100) %>%
+  mutate(small_id=1:nrow(.)) %>%
+  mutate(area=st_area(.)) %>%
+  filter(as.numeric(area) > 0) %>%
+  #Drop original large tiles
+  filter(area < min_tile_area) %>%
+  arrange(desc(area))
+
+
+#Finally? That was bananas
+super_geos <- st_join(unique_geo,usa.cld,st_within) %>%
+  group_by(small_id) %>%
+  summarize(count=sum(count,na.rm=T),
+            area=mean(area,na.rm=T)) %>%
+  arrange(desc(area)) 
+
+# Mapview check
+mapview(super_geos,zcol='count')
+```
+
+
+## Path plots
+
+```{r}
+#This code is adapted from here: 
+# https://rud.is/b/2014/11/16/moving-the-earth-well-alaska-hawaii-with-r/
+#Pull out alaska
+rotation = function(a){
+  r = a * pi / 180 #degrees to radians
+  matrix(c(cos(r), sin(r), -sin(r), cos(r)), nrow = 2, ncol = 2)
+} 
+
+cld_usa <- super_geos %>%
+  st_crop(.,grwl.usa) %>%
+  st_join(usa) %>%
+  st_intersection(usa)
+
+
+# Subset ak tiles
+ak <- cld_usa %>%
+  filter(name == 'Alaska')
+
+#Subset gauges
+gauges <- st_transform(site_sf, crs = st_crs(ak))
+ak_gauges <- gauges[ak, ]
+  
+#Subset grwl
+ak_grwl <- grwl.usa[ak, ] %>%
+st_intersection(ak)
+
+#Shifter thing
+
+sf_elision <- function(st, base, shift = c(1000000,-4900000)) {
+  ak_geo_shift <- st_geometry(st) +
+    shift
+  
+  
+  single_center <- base %>%
+    group_by() %>%
+    summarize() %>%
+    slice(rep(1:n(), each = nrow(st))) %>%
+    st_centroid() %>%
+    st_geometry()
+  
+  shift_centers <- single_center + shift
+  
+  rote <-
+    (ak_geo_shift - shift_centers) * rotation(-35) * 0.6 + shift_centers
+  
+  flipped <- st_set_geometry(st, rote %>%
+                               st_set_crs(., 2163))
+  return(flipped)
+}
+
+
+ak_gauge_elide <- sf_elision(ak_gauges,ak) %>%
+  st_transform(2163)
+
+ak_elide <- sf_elision(ak, base = ak) %>%
+  st_transform(2163)
+
+grwl_elide <- sf_elision(ak_grwl, base = ak) %>%
+  st_transform(2163)
+
+
+path_cld_cray <- cld_usa %>%
+  filter(!name %in% c('Hawaii', 'Alaska')) %>%
+  filter(!is.na(name)) %>%
+  rbind(., ak_elide)
+
+
+
+grwl_ak_elide <- grwl.usa %>%
+  filter(!OBJECTID %in% grwl_elide$OBJECTID) %>%
+  rbind(., grwl_elide %>% dplyr::select(names(grwl.usa))) %>%
+  filter(st_is_valid(.))
+
+gauges_elide <- gauges %>%
+  filter(!id %in% ak_gauges$id) %>%
+  rbind(.,ak_gauge_elide)
+
+
+
+
 
 ```
 
 
+
+```{r}
+library(tmap)
+greypal <- c('grey70','gray20')
+png(filename='intro_map_path_row.png',
+    width=6,height=5,
+    units='in',
+    res=300)
+tm_shape(path_cld_cray) +
+  tm_fill(col='count',
+          style='log10',
+          palette=greypal,
+          legend.is.portrait = F) +
+          #breaks=c(3,30,300,900,3300))+ 
+  tm_shape(grwl_ak_elide) +
+    tm_lines(col='blue') + 
+  tm_shape(gauges_elide) + 
+    tm_bubbles(col='red',border.col='gray30',size=0.07) + 
+  tm_layout(legend.position = c(0.6,0.01),
+            legend.width = -0.9,
+            legend.title.size = 0.9) + 
+  tm_add_legend(type='symbol',
+                labels=c('USGS gauge'),
+                title='',
+                col='red')
+
+dev.off()
+```
+
+
+
+## ARD plots
 ```{r}
 #This code is adapted from here: 
 # https://rud.is/b/2014/11/16/moving-the-earth-well-alaska-hawaii-with-r/
@@ -305,8 +507,8 @@ usa.cld.cray <- cld_ard %>%
   filter(!name %in% c('Hawaii', 'Alaska')) %>%
   rbind(., ak_elide) %>%
   group_by(ard_id) %>%
-  summarize(`Mean cloud cover` = mean(score, na.rm = T))
-
+  summarize(`Mean cloud cover` = mean(score, na.rm = T),
+            count = min(count,na.rm=T))
 
 
 grwl_ak_elide <- grwl.usa %>%
@@ -326,16 +528,16 @@ gauges_elide <- gauges %>%
 library(tmap)
 
 greypal <- c('grey70','gray20')
-png(filename='intro_map.png',
+png(filename='intro_map_borders_count.png',
     width=6,height=5,
     units='in',
     res=300)
 tm_shape(usa.cld.cray) +
-  tm_fill(col='Mean cloud cover',
+  tm_polygons(col='count',
           style='cont',
           palette=greypal,
-          legend.is.portrait = F,
-          breaks=c(10,20,30,40,50,60))+ 
+          legend.is.portrait = F) +
+          #breaks=c(10,20,30,40,50,60))+ 
   tm_shape(grwl_ak_elide) +
     tm_lines(col='blue') + 
   tm_shape(gauges_elide) + 
@@ -352,4 +554,7 @@ dev.off()
 ```
 
 
+```{r}
+
+```
 

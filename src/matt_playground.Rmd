@@ -155,10 +155,7 @@ counts <- usgs_full %>%
   arrange(desc(count)) %>%
   slice(1:50)
 
-head(counts)
-names(usgs_full)
 
-?spread
 most <- usgs_full %>%
   select(-sat) %>%
   mutate(date=as.Date(date)) %>%
