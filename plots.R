@@ -35,7 +35,7 @@ plot1 <- ggplot(cloud_ks, aes(x=cloud_free_frac, y=d_boot, color=ks_test))+
   geom_point(alpha=0.5)+
   # geom_smooth(method="lm") +
   theme_few() +
-  xlab("Fraction cloud-free overpasses") +
+  xlab("Fraction cloud-free") +
   ylab("D statistic (KS-test)") +
   theme(legend.position = c(0.79, 0.95),
         legend.background = element_blank(),
@@ -50,7 +50,7 @@ plot1_lines <- ggplot(cloud_ks, aes(x=cloud_free_frac, y=d_boot, color=ks_test))
   geom_point(alpha=0.5)+
   geom_smooth(method="lm", se=F) +
   theme_few() +
-  xlab("Fraction of cloud-free overpasses") +
+  xlab("Fraction cloud-free") +
   ylab("D statistic (KS-test)") +
   theme(legend.position = c(0.79, 0.95),
         legend.background = element_blank(),
@@ -83,8 +83,8 @@ plot3 <- ggplot(ks_bind_join %>%
        aes(percentile_range_sample/100)) +
   stat_ecdf(geom = "point", alpha=0.5) +
   theme_few() +
-  ylab("Empirical CDF of gauges") +
-  xlab("Proportion of flows sampled by LS ") +
+  ylab("CDF of gauges") +
+  xlab("Proportion of flow quantiles ") +
   geom_hline(aes(yintercept= 0.1), col="red", linetype=2) +
   geom_vline(aes(xintercept=0.97), col="red", linetype=2) +
   theme(legend.position = "none",
@@ -96,14 +96,14 @@ plot3 <- ggplot(ks_bind_join %>%
 # save 3 panel fig
 library(egg)
 
-ggpubr::ggarrange(plot1, plot2, plot3, nrow=2, ncol=2)
-ggsave(paste('D:/Dropbox/projects/ROTFL/figs/', "Fig_gauges.tiff", sep=""), units='in', width = 4.5, height=4, dpi = 300)
-ggsave(paste('D:/Dropbox/projects/ROTFL/figs/', "Fig_gauges.png", sep=""), units='in', width = 4.5, height=4, dpi = 300)
+ggpubr::ggarrange(plot1, plot2, plot3, nrow=1, ncol=3)
+ggsave(paste('D:/Dropbox/projects/ROTFL/figs/', "Fig_gauges_row.tiff", sep=""), units='in', width = 6, height=2., dpi = 300)
+ggsave(paste('D:/Dropbox/projects/ROTFL/figs/', "Fig_gauges_row.png", sep=""), units='in', width = 6, height=2, dpi = 300)
 
 # save 3 panel fig with best fit lines
-ggpubr::ggarrange(plot1_lines, plot2, plot3, nrow=2, ncol=2)
-ggsave(paste('D:/Dropbox/projects/ROTFL/figs/', "Fig_gauges_lines.tiff", sep=""), units='in', width = 4.5, height=4, dpi = 300)
-ggsave(paste('D:/Dropbox/projects/ROTFL/figs/', "Fig_gauges_lines.png", sep=""), units='in', width = 4.5, height=4, dpi = 300)
+ggpubr::ggarrange(plot1_lines, plot2, plot3, nrow=1, ncol=3)
+ggsave(paste('D:/Dropbox/projects/ROTFL/figs/', "Fig_gauges_lines_row.tiff", sep=""), units='in', width = 6, height=2, dpi = 300)
+ggsave(paste('D:/Dropbox/projects/ROTFL/figs/', "Fig_gauges_lines_row.png", sep=""), units='in', width = 6, height=2, dpi = 300)
 
 
 

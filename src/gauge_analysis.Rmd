@@ -16,7 +16,6 @@ library(modeest)
 library(sf)
 library(mapview)
 library(feather)
-library(equivalence)
 library(ggthemes)
 library(stats)
 library(MASS)
@@ -28,10 +27,7 @@ library(htmlwidgets)
 library(ggthemes)
 library(leafpop)
 library(leaflet)
-#devtools::install_github("GRousselet/rogme")
-#library(rogme)
-## Equivalence testing
-#library(equivalence)
+library(ggpubr)
 library(Matching)
 library(twosamples)
 
@@ -186,7 +182,6 @@ ks_bind <- bind_rows(ks_gs, ks_gs_all, ks_gs_not)
 
 ```{r gauge_percentiles, echo=F}
 
-
 # make look up table of population flow percentiles by site to later join to find what population percentiles corresponed with min/max sample Q
 
 percentiles_pop <- full_sats %>%
@@ -229,56 +224,7 @@ ks_bind_join <- ks_bind %>%
 
 ```
 
-
-```{r figures, echo=F}
-
-# make some maps of how well landsat captures modal and range of Q per gage 
-
-ks_bind_join <- read_csv("D:/GoogleDrive/ROTFL/out/ks_tests_sites_all.csv")
-
-cloud_ks <- cloud_join %>%
-  inner_join(ks_bind_join %>%
-               filter(test =="ks_cloud_free") %>%
-               dplyr::select(id:percentile_range_sample),
-             by="id")
-
-# try rbi, percentile_range_sample, drain_area_va
-plot1 <- ggplot(cloud_ks, aes(x=cloud_free_frac, y=d_boot, color=ks_test))+
-  geom_point()+
- # geom_smooth(method="lm") +
-  theme_few() +
-  xlab("Fraction of cloud-free overpasses") +
-  ylab("D statistic (KS test)") +
-  theme(legend.position = c(0.78, 0.94),
-        legend.background = element_blank(),
-        legend.text = element_text(size=9),
-        axis.title = element_text(size=10),
-        axis.text = element_text(size=10)) +
-  scale_color_manual(values=c("grey", "black"), labels=c("p < 0.05", "p > 0.05"), name="")
-  
-
-plot2 <- ggplot(cloud_ks) +
-  geom_point(aes(x=rbi, y=d_boot, color=ks_test))+
-  theme_few() +
-  scale_x_log10(breaks = c(0.03, 0.1, 0.3, 1.0),
-                labels = c("0.03", "0.1", "0.3", "1.0")) +
-  xlab("Flashiness Index") +
-  ylab("") +
-  theme(legend.position = "none",
-        legend.background = element_blank(),
-        axis.title = element_text(size=10),
-        axis.text = element_text(size=10)) +
-  scale_color_manual(values=c("grey", "black"), labels=c("p < 0.05", "p > 0.05"), name="") 
-  
-
-
-#library(ggpubr)
-
-ggarrange(plot1, plot2, nrow=1, ncol=2)
-
-ggsave(paste('D:/Dropbox/projects/ROTFL/figs/', "D_rbi_clouds.png", sep=""), units='in', width = 6, height=3, dpi = 300)
-
-# >90% of gages capture 97% perecntiles of flow
+```{r stats}
 
 
 lm_same <- lm(d_boot~cloud_free_frac, data=cloud_ks %>%
@@ -288,16 +234,110 @@ lm_diff <- lm(d_boot~cloud_free_frac, data=cloud_ks %>%
                 filter(ks_test=="different"))
 
 
-# 
-# ks_sf <- ks_bind_join %>%
-#   filter(test == "ks_cloud_free") %>%
-#   st_as_sf(coords = c("dec_long_va", "dec_lat_va"), crs= 4326) 
-# 
-# mapview(ks_sf, zcol='d_boot',  legend=T )
-# 
+spear_cloud <- cloud_ks %>%
+  st_set_geometry(NULL) %>%
+  as_tibble() %>%
+  group_by(ks_test) %>%
+  nest() %>%
+  mutate(cor = purrr::map(data, ~cor.test(.x$cloud_free_frac, .x$d_boot, method="spearm"))) %>%
+  mutate(t = purrr::map(cor, tidy)) %>%
+  unnest(t)
+
+spear_rbi <- cloud_ks %>%
+  st_set_geometry(NULL) %>%
+  as_tibble() %>%
+  group_by(ks_test) %>%
+  nest() %>%
+  mutate(cor = purrr::map(data, ~cor.test(.x$rbi, .x$d_boot, method="spearm"))) %>%
+  mutate(t = purrr::map(cor, tidy)) %>%
+  unnest(t)
+
+```
 
 
+```{r figure_4, echo=F}
 
+# make figure 4
+cloud_ks <- cloud_join %>%
+  inner_join(ks_bind_join %>%
+               filter(test =="ks_cloud_free") %>%
+               dplyr::select(id:percentile_range_sample),
+             by="id")
+
+# relating D stat from KS test to fraction cloud free days per gauge
+plot1 <- ggplot(cloud_ks, aes(x=cloud_free_frac, y=d_boot, color=ks_test))+
+  geom_point(fill=NA, shape=21, size=0.75)+
+  # geom_smooth(method="lm") +
+  theme_few() +
+  xlab("Fraction cloud-free") +
+  ylab("D statistic (KS-test)") +
+  theme(legend.position = c(0.79, 0.95),
+        legend.background = element_blank(),
+        legend.text = element_text(size=8),
+        legend.key.size = unit(0.05, 'lines'),
+        axis.title = element_text(size=9),
+        axis.text = element_text(size=9)) +
+  scale_color_manual(values=c("grey", "black"), labels=c("p < 0.05", "p > 0.05"), name="")
+
+# same with best fit lines
+plot1_lines <- ggplot(cloud_ks, aes(x=cloud_free_frac, y=d_boot, color=ks_test))+
+ geom_point(fill=NA, shape=21, size=0.75)+
+  geom_smooth(method="lm", se=F) +
+  theme_few() +
+  xlab("Fraction cloud-free") +
+  ylab("D statistic (KS-test)") +
+  theme(legend.position = c(0.79, 0.95),
+        legend.background = element_blank(),
+        legend.key.size = unit(0.05, 'lines'),
+        legend.text = element_text(size=8),
+        axis.title = element_text(size=9),
+        axis.text = element_text(size=9)) +
+  scale_color_manual(values=c("grey", "black"), labels=c("p < 0.05", "p > 0.05"), name="")
+
+
+# relating D stat from KS test to flow flashiness (Richards-Baker Index) per gauge 
+plot2 <- ggplot(cloud_ks) +
+  geom_point(aes(x=rbi, y=d_boot, color=ks_test), fill=NA, shape=21, size=0.75)+
+  theme_few() +
+  scale_x_log10(breaks = c(0.03, 0.1, 0.3, 1.0),
+                labels = c("0.03", "0.1", "0.3", "1.0")) +
+  xlab("Flashiness Index") +
+  ylab("") +
+  theme(legend.position = "none",
+        legend.background = element_blank(),
+        axis.title = element_text(size=9),
+        axis.text = element_text(size=9)) +
+  scale_color_manual(values=c("grey", "black"), labels=c("p < 0.05", "p > 0.05"), name="") 
+
+# cumulative distribution function of the range of flow percentiles in 
+# the whole gague record that is captured by Landsat sampling...
+# >90% of gages capture 97% perecntiles of flow
+
+plot3 <- ggplot(ks_bind_join %>%
+         filter(test == "ks_cloud_free"),
+       aes(percentile_range_sample/100)) +
+  stat_ecdf(geom = "point", alpha=0.5) +
+  theme_few() +
+  ylab("CDF of gauges") +
+  xlab("Proportion of flow quantiles ") +
+  geom_hline(aes(yintercept= 0.1), col="red", linetype=2) +
+  geom_vline(aes(xintercept=0.97), col="red", linetype=2) +
+  theme(legend.position = "none",
+        axis.title = element_text(size=9),
+        axis.text = element_text(size=9)) 
+
+#ggsave(paste('figs/', "proportion_flows_captured2.png", sep=""), units='in', width = 3.2, height=3, dpi = 300)
+
+library(egg)
+
+ggpubr::ggarrange(plot1, plot2, plot3, nrow=1, ncol=3)
+#ggsave(paste('D:/Dropbox/projects/ROTFL/figs/', "Fig4_gauges_row2.tiff", sep=""), units='in', width = 6, height=2., dpi = 300)
+#ggsave(paste('D:/Dropbox/projects/ROTFL/figs/', "Fig4_gauges_row2.png", sep=""), units='in', width = 6, height=2, dpi = 300)
+
+# save 3 panel fig with best fit lines
+ggpubr::ggarrange(plot1_lines, plot2, plot3, nrow=1, ncol=3)
+#ggsave(paste('D:/Dropbox/projects/ROTFL/figs/', "Fig4_gauges_lines_row2.tiff", sep=""), units='in', width = 6, height=2, dpi = 300)
+#ggsave(paste('D:/Dropbox/projects/ROTFL/figs/', "Fig4_gauges_lines_row2.png", sep=""), units='in', width = 6, height=2, dpi = 300)
 
 ```
 

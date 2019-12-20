@@ -76,7 +76,7 @@ landsat_all <- map_dfr(folders_all,read_stacker) %>%
   filter(!is.na(q), q> 0) %>%
   mutate(id = str_pad(id, 8, pad="0", side="left"))
 
-# Stack the usgs full dataset4
+# Stack the usgs full dataset
 usgs_full <- read_stacker(folder='D:/GoogleDrive/ROTFL/in/cleaned/Master_Tables')  %>%
   dplyr::select(-sat) %>%
   mutate(id = str_pad(id, 8, pad="0", side="left"))
