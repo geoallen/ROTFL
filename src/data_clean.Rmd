@@ -1,0 +1,121 @@
+---
+title: "clean_data"
+author: "John Gardner"
+date: "October 9, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(anytime)
+library(lubridate)
+library(modeest)
+library(sf)
+library(mapview)
+library(feather)
+library(equivalence)
+library(ggthemes)
+library(stats)
+library(MASS)
+library(broom)
+library(tidyr)
+library(dataRetrieval)
+library(htmlwidgets)
+library(ggthemes)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r dataload, echo=FALSE}
+#Function for making data long. 
+read_stacker <- function(folder){
+  files <- list.files(path=path.expand(folder),full.names = T)
+  ## Dropping for now
+  #codes <- files[grepl('Codes_',files)]
+  dates <- files[grepl('Dates',files)]
+  q <- files[grepl('Values',files)]
+  
+  #make it long
+  date_data <- read_csv(dates) %>%
+    gather(key=id,value=date)
+  q_data <- read_csv(q) %>%
+    gather(key=id,value=q) %>%
+    mutate(date=as.POSIXct(date_data$date,origin='1970-01-01')) %>%
+    # changes substr for my filepath
+    mutate(sat = substr(folder,33,41)) %>%
+    separate(id,into=c("x", "id"), sep="X", remove=T, convert=T ) %>%
+    mutate(id = as.character(id)) %>%
+    dplyr::select(-x) 
+    #mutate(id = gsub('X','0',id))  #%>%
+ #   mutate(id=ifelse(substr(id,1,1) != 0 & nchar(id) < 8,paste0('0',id),id))
+  return(q_data)
+}
+
+#Folders where data lives
+folders <- c('D:/GoogleDrive/ROTFL/in/cleaned/Landsat_8/CloudsRemoved','D:/GoogleDrive/ROTFL/in/cleaned/Landsat_7/CloudsRemoved',
+             'D:/GoogleDrive/ROTFL/in/cleaned/Landsat_5/CloudsRemoved')
+
+folders_all <- c('D:/GoogleDrive/ROTFL/in/cleaned/Landsat_8/AllReturns','D:/GoogleDrive/ROTFL/in/cleaned/Landsat_7/AllReturns',
+             'D:/GoogleDrive/ROTFL/in/cleaned/Landsat_5/AllReturns')
+
+#Stack all landsats and remove unknown IDS. 
+landsat_cloud_free <- map_dfr(folders,read_stacker) %>%
+  filter(id != '01135') %>%
+  filter(!is.na(date)) %>%
+  filter(!is.na(q), q> 0) %>%
+  mutate(id = str_pad(id, 8, pad="0", side="left"))
+
+landsat_all <- map_dfr(folders_all,read_stacker) %>%
+  filter(id != '01135') %>%
+  filter(!is.na(date)) %>%
+  filter(!is.na(q), q> 0) %>%
+  mutate(id = str_pad(id, 8, pad="0", side="left"))
+
+# Stack the usgs full dataset
+usgs_full <- read_stacker(folder='D:/GoogleDrive/ROTFL/in/cleaned/Master_Tables')  %>%
+  dplyr::select(-sat) %>%
+  mutate(id = str_pad(id, 8, pad="0", side="left"))
+
+# Make a separate dataset where landsat only counts if it is at the same 
+# time q was taken
+matched_sats <- landsat_cloud_free %>%
+  inner_join(usgs_full %>% dplyr::select(id,date),by=c('id','date'))
+
+#Make long dataset of full usgs distribution with joined "landsat samples"
+full_sats <- usgs_full %>% 
+  rename(q_pop=q) %>%
+  left_join(landsat_cloud_free %>% rename(q_sample=q), by=c('id','date'))
+
+# Make long dataset of Q where Landsat did NOT sample
+not_matched <- full_sats %>%
+  filter(is.na(q_sample)) %>%
+  dplyr::select(-q_sample, -sat) %>%
+  rename(q = q_pop)
+
+
+# Get the unique usgs ids
+ids <- unique(usgs_full$id)
+
+#Download site lat long and other info
+sites <- readNWISsite(ids) %>% as_tibble() %>%
+  rename(id=site_no)
+
+#sites <- read_csv('D:/GoogleDrive/ROTFL/in/gauge_attributes/SiteAttributes.csv') %>%
+#  rename(id=site_no) %>%
+#  mutate(id = str_pad(id, 8, pad="0", side="left"),
+#          id =as.character(id))
+
+#Convert to spatial object
+site_sf <- st_as_sf(sites,coords=c('dec_long_va','dec_lat_va'),crs=4326)
+
+#Save as .RData file
+#save(landsat_cloud_free, landsat_all, matched_sats, usgs_full, not_matched, full_sats, sites, site_sf, file='D:/GoogleDrive/ROTFL/out/rotfl_clean.RData')
+
+```
+
+
