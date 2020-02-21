@@ -150,8 +150,8 @@ for (i in 1:ncol(Master_Value)){ # round(seq(1, ncol(Master_Value), length.out=5
   # cloud free samples:
   Date_cf = as.Date(as.POSIXct(Dtab_cf[,i], origin="1970-01-01"))
   Q_cms_cf = Qtab_cf[,i]*0.028316846592
-
-
+  
+  
   # handle irregular NA values for clean records:
   naBoo = is.na(Date_raw) | is.na(Q_cms_raw)
   Date = Date_raw[!naBoo]
@@ -180,7 +180,7 @@ for (i in 1:ncol(Master_Value)){ # round(seq(1, ncol(Master_Value), length.out=5
   #   }
   # }
   
- 
+  
   
   # open pdf device: 
   # pdf(pdfOutPath[i], 14, 4)
@@ -342,14 +342,14 @@ system(cmd)
 
 o = order(as.numeric(statTab$N_ci), decreasing=T)
 plot(statTab$ks_D_ci[o], statTab$ks_p_ci[o], 
-       col=rainbow(nrow(statTab), v=0.9, alpha=0.7, start=0, end=0.2),
-       xlab="k-s D", ylab="k-s p",
-       cex=0.7)
+     col=rainbow(nrow(statTab), v=0.9, alpha=0.7, start=0, end=0.2),
+     xlab="k-s D", ylab="k-s p",
+     cex=0.7)
 o = order(as.numeric(statTab$N_cf), decreasing = T)
 points(statTab$ks_D_cf[o], statTab$ks_p_cf[o],
-     xlab="k-s D", ylab="k-s p",
-     col=rainbow(nrow(statTab), alpha=0.4, start=0.6, end=0.8), 
-     pch=3, cex=0.5)
+       xlab="k-s D", ylab="k-s p",
+       col=rainbow(nrow(statTab), alpha=0.4, start=0.6, end=0.8), 
+       pch=3, cex=0.5)
 
 lVal = as.numeric(statTab$N_ci)
 legend("topright", legend = c(min(lVal,na.rm=T), median(lVal,na.rm=T), max(lVal,na.rm=T)), 
@@ -360,7 +360,7 @@ legend("bottomright", legend = c(min(lVal,na.rm=T), median(lVal,na.rm=T), max(lV
        fill = rainbow(3, alpha=0.4, start=0.6, end=0.8), title = "cloud free")
 
 length(which(statTab$ks_p_ci < 0.05))/nrow(statTab)
-             
+
 median(as.numeric(statTab$ks_D_ci[statTab$ks_p_ci < 0.05]), na.rm=T)
 
 
@@ -497,8 +497,3 @@ median(as.numeric(statTab$ks_D_ci[statTab$ks_p_ci < 0.05]), na.rm=T)
 # dev.off()
 # cmd = paste('open', pdfOutPath)
 # system(cmd)
-
-
-
-
-

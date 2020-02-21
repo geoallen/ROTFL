@@ -110,7 +110,7 @@ qTabList = c(qTabListIndiv, qTabList578)
 pdfOutPath = paste0(outDirPath, "/quantile_plots.pdf")
 
 # set up plot:
-pdf(pdfOutPath, 10, 10)
+pdf(pdfOutPath, 11, 11.5)
 par(mar=c(4,4,1,1))
 layout(matrix(c(1,1,1,
               2,3,4,
@@ -119,16 +119,16 @@ layout(matrix(c(1,1,1,
        heights = c(1,4,4,4))
 
 # remove zero (no flow) or negative (reverse flow) values from master qTab:
-Master_Value_qTab[Master_Value_qTab<=0] = NA
-xRange = range(Master_Value_qTab, na.rm=T)
+#Master_Value_qTab[Master_Value_qTab<=0] = NA
+xRange = c(0, 4e4) #range(Master_Value_qTab, na.rm=T)
 
 # plot computed samples: 
-plotInd = which(lapply(qTabList, length) > 1)
+plotInd = 22 # which(lapply(qTabList, length) > 1) #
 for (i in 1:length(plotInd)){
   sTab = qTabList[[plotInd[i]]]
   # remove zero (no flow) or negative (reverse flow) values from qTab.
   # this is necessary since we are plotting log-log:
-  sTab[sTab<=0] = NA
+  # sTab[sTab<=0] = NA
   
   m2s_match = match(names(Master_Value_qTab), names(sTab))
   
@@ -140,16 +140,67 @@ for (i in 1:length(plotInd)){
     Qpop_cms = as.numeric(Master_Value_qTab[j,])*0.028316846592
     Qsam_cms = as.numeric(sTab[j, m2s_match])*0.028316846592
     
-    plot(Qpop_cms, Qsam_cms, 
+    x = Qpop_cms[!(is.na(Qpop_cms) | is.na(Qsam_cms))]
+    y = Qsam_cms[!(is.na(Qpop_cms) | is.na(Qsam_cms))]
+    x_plot = x/1e3
+    y_plot = y/1e3
+    
+    xRange = range(c(0, x_plot, y_plot))
+    
+    plot(x_plot, y_plot, 
          main="",
-         xlab="Qpopulation (cms)",
-         ylab="Qsample (cms)",
-         log="xy", 
+         xlab="QGauge (cms)",
+         ylab="QLandsat (cms)",
+         log="", 
          xlim=xRange, ylim=xRange,
-         pch=16, cex=0.8, col=rgb(0,0,0,0.2))
-    title(paste0("Quantile: ", probs[j]*100, "%"), line=-1)
-    abline(0, 1, lwd=0.5)
-  
+         las=1, pch=16, cex=0.8, col=rgb(0,0,0,0.6))
+    abline(0, 1, lwd=0.5) #1:1 line
+    mtext(expression(10^3), adj=0, outer=F, cex=0.65)
+    mtext(expression(10^3), side=4, adj=0, outer=F, cex=0.65)
+    legend("topleft", paste0("Percentile: ", probs[j]*100, "%"), 
+           border=F, bty="n", text.font=2, cex=1.4)
+   
+    
+    # least square regression on non-log transformed data:
+    reg = lm(y ~ x)
+    #print(summary(reg))
+    
+    # Thiel-Sen nonparametric median estimator:
+    reg_sen = zyp::zyp.sen(y ~ x)
+    
+    # add best fit line:
+    abline(reg_sen$coefficients[[1]]/1e3, reg_sen$coefficients[[2]], col=2)
+    
+    rRMSE = sqrt(sum(((y - x)/x)^2)/length(x))
+    rBIAS = sum((y - x)/x)/length(x)
+    
+    # KS test:
+    ks = suppressWarnings(ks.test(y, x, "two.sided"))
+    
+    # # Wilcoxon non-parametrix inferential test:
+    # # p-val>0.05 means that sample is not statistically different than population:
+    wilcox = wilcox.test(y, x, "two.sided", exact=F)
+    # if (wilcox$p.value < 1e-3){
+    #   legend("bottomright", "Wilcox p-value < 0.001")
+    # }else{
+    #   legend("bottomright", paste("Wilcox p-value =", round(wilcox$p.value, 3)))
+    # }
+    
+    legend("bottomright", 
+           paste(" y =", round(reg_sen[[1]][[2]], 2), "x +", round(reg_sen[[1]][[1]], 4),
+                # "y =",  "e^", round(reg[[1]][[1]], 2), "* x^", round(reg[[1]][[2]], 2), 
+                 "\n R2 = ", round(summary(reg)$r.squared, 2), 
+                "\n rBIAS =",  round(rBIAS, 2),
+                "\n rRMSE =",  round(rRMSE, 2),
+                 "\n K-S D =",  round(ks[[1]][[1]], 2),
+                 #"\n K-S p =",  round(ks[[2]][[1]], 4),
+                 "\n MWW p =", round(wilcox$p.value, 4)),
+           bty="n", adj=c(0,-0.25))
+
+    #if (ks[[2]][[1]] < 0.05 ){ box(col=2, lwd=2) }
+    
+    
+    
     # Equivalence test: https://en.wikipedia.org/wiki/Equivalence_test
     # https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3019319/#CR2
     # https://link.springer.com/content/pdf/10.1007%2FBF01068419.pdf
@@ -161,56 +212,29 @@ for (i in 1:length(plotInd)){
     # 'Two One-Sided Tests’ (TOST) procedure:
     # parametric t-test is likely not correct test due to apparent heteroskedasticity:
     
-    
     # gt_pVal = t.test(Qsam_cms, Qpop_cms, alternative="greater")$p.value
     # lt_pVal = t.test(Qsam_cms, Qpop_cms, alternative="less")$p.value    
     
-    # Noparametric two-one-sided wilcox rank sum test procedure:
+    # Nonparametric two-one-sided wilcoxon rank sum test procedure:
     # gt_pVal = wilcox.test(Qsam_cms, Qpop_cms, alternative="greater", exact=F)$p.value
     # lt_pVal = wilcox.test(Qsam_cms, Qpop_cms, alternative="less", exact=F)$p.value
-    
-    # add a regression line: 
-    #reg = lm( log(Qsam_cms) ~ log(Qpop_cms) )  # least squares in log space
-    
-    
-    # Thiel-Sen nonparametric median estimator:
-    x = log(Qpop_cms[!(is.na(Qpop_cms) | is.na(Qsam_cms))])
-    y = log(Qsam_cms[!(is.na(Qpop_cms) | is.na(Qsam_cms))])
-    reg = zyp.sen(y~x)
-    # add best fit line:
-    xSeq = seq(xRange[1], xRange[2], length.out=100)
-    ySeq = exp(reg[[1]][[1]]) * xSeq^reg[[1]][[2]]
-    lines(xSeq, ySeq, col=2)
-    
-    rRMSE = sqrt(sum(((Qsam_cms - Qpop_cms)/Qpop_cms)^2, na.rm=T)/length(Qpop_cms))
-    rBIAS = sum((Qsam_cms - Qpop_cms)/Qpop_cms, na.rm=T)/length(Qpop_cms)
-    
-    # KS test:
-    ks = suppressWarnings(ks.test(Qsam_cms, Qpop_cms, "two.sided"))
-    
-    # # Wilcox non-parametrix inferential test:
-    # # p-val>0.01 means that sample is not statistically different than population:
-    wilcox = wilcox.test(Qsam_cms, Qpop_cms, "two.sided", exact=F)
-    # if (wilcox$p.value < 1e-3){
-    #   legend("bottomright", "Wilcox p-value < 0.001")
-    # }else{
-    #   legend("bottomright", paste("Wilcox p-value =", round(wilcox$p.value, 3)))
-    # }
     
     # tTest = t.test(Qsam_cms, Qpop_cms)
     # text(max(Qpop_cms, na.rm=T), min(Qsam_cms, na.rm=T), 
     #      paste("t-test p-value =", tTest$p.value), pos=2)
     
-    legend("bottomright", 
-           paste("y =",  "e^", round(reg[[1]][[1]], 2), "* x^", round(reg[[1]][[2]], 2), 
-                 "\n rRMSE:",  round(rRMSE, 2),
-                 "\n rBIAS:",  round(rBIAS, 2),
-                 "\n K-S D:",  round(ks[[1]][[1]], 2),
-                 "\n K-S p:",  round(ks[[2]][[1]], 4),
-                 "\n Wilcox p:", round(wilcox$p.value, 4)),
-           bty="n", adj=c(0,-0.25))
-
-    if (ks[[2]][[1]] < 0.05 ){ box(col=2, lwd=2) }
+    # add a regression line: 
+    #reg = lm( log(Qsam_cms) ~ log(Qpop_cms) )  # least squares in log space
+    # # add best fit line:
+    # xRange = range(x, na.rm=T)
+    # xSeq = seq(xRange[1], xRange[2], length.out=1e4)
+    # ySeq = reg[[1]][[2]]*xSeq+reg[[1]][[1]]
+    # lines(xSeq, ySeq, col=2)
+    
+    # add best fit line:
+    # xSeq = seq(xRange[1], xRange[2], length.out=100)
+    # ySeq = exp(reg[[1]][[1]]) * xSeq^reg[[1]][[2]]
+    # lines(xSeq, ySeq, col=2)
     
   }
   
@@ -219,6 +243,7 @@ for (i in 1:length(plotInd)){
 dev.off()
 cmd = paste('open', pdfOutPath)
 system(cmd)
+
 
 
 
